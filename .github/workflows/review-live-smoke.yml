@@ -1,0 +1,41 @@
+name: Live review federated retrieval smoke test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/review-live-smoke.yml
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements-ci.txt
+      - name: Real PubMed and OpenAlex retrieval, dedup and ranking
+        run: |
+          python - <<'PY'
+          from review_retrieval import pubmed_search, openalex_search
+          from review_core import merge_records, lexical_rank
+
+          p = pubmed_search('"social media"[tiab] AND university[tiab]', limit=5)
+          print('PubMed total:', p.total, 'retrieved:', len(p.records),
+                'first title:', p.records[0].title if p.records else '(none)')
+          assert len(p.records) == 5
+          a = openalex_search("get works about social media", limit=5)
+          print('OpenAlex total:', a.total, 'retrieved:', len(a.records),
+                'first title:', a.records[0].title if a.records else '(none)')
+          assert len(a.records) == 5
+          merged = merge_records(p.records + a.records)
+          ranked = lexical_rank(
+              merged.records, "social media use among university students")
+          print('Merged:', len(ranked),
+                'duplicates:', merged.duplicates_removed,
+                'ranked:', [(r.title[:60], r.rank_score) for r in ranked[:3]])
+          assert len(ranked) + merged.duplicates_removed == 10
+          assert all(r.sources and r.identifiers for r in ranked)
+          PY
