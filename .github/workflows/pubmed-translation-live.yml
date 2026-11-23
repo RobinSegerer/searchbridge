@@ -20,6 +20,7 @@ jobs:
         run: |
           python - <<'PY'
           import requests
+          import time
           from pubmed_translation import translate_pubmed
           from test_pubmed_translation import FULL
           cases = {
@@ -30,13 +31,18 @@ jobs:
           }
           for label, ovid in cases.items():
               generated = translate_pubmed(ovid)
-              response = requests.post(
-                  "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
-                  data={
-                    "db": "pubmed", "retmax": "0",
-                    "retmode": "json", "term": generated["query"],
-                    "tool": "SearchBridge",
-                  }, timeout=60)
+              time.sleep(1.2)  # NCBI anonymous limit: 3 requests/second
+              for attempt in range(3):
+                  response = requests.post(
+                      "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+                      data={
+                          "db": "pubmed", "retmax": "0",
+                          "retmode": "json", "term": generated["query"],
+                          "tool": "SearchBridge",
+                      }, timeout=60)
+                  if response.status_code != 429:
+                      break
+                  time.sleep(2.5 * (attempt + 1))
               print("CASE", label, "HTTP", response.status_code,
                     "chars", len(generated["query"]))
               print("RESPONSE", response.text[:1200])
