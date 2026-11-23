@@ -14,8 +14,8 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements-ci.txt
       - name: Verify Python syntax
-        run: python -m py_compile app.py translator_core.py ris_proximity.py pubmed_proximity.py term_harvesting.py harvesting_ui.py mesh_expansion.py
+        run: python -m py_compile app.py translator_core.py ris_proximity.py pubmed_proximity.py term_harvesting.py harvesting_ui.py mesh_expansion.py semantic_ranking.py
       - name: Run offline regression tests
         run: python -m unittest discover -v
