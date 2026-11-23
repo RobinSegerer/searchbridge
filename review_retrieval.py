@@ -96,15 +96,29 @@ def openalex_search(oql: str, limit: int = 100, *,
             response.raise_for_status()
             data = response.json()
         except (requests.RequestException, ValueError) as exc:
-            status = getattr(getattr(exc, "response", None), "status_code", "?")
+            response = getattr(exc, "response", None)
+            status = getattr(response, "status_code", "?")
+            diagnostic = ""
+            if response is not None:
+                try:
+                    detail = response.json()
+                    problems = (detail.get("validation") or {}).get("errors") or []
+                    if problems:
+                        diagnostic = " / ".join(
+                            str(p.get("message", "")) for p in problems[:2])
+                    elif isinstance(detail, dict):
+                        diagnostic = str(
+                            detail.get("message") or detail.get("error") or "")[:220]
+                except (ValueError, TypeError, AttributeError):
+                    diagnostic = ""
             if records:
                 raise RetrievalError(
                     f"OpenAlex wurde nach {len(records)} Datensätzen unterbrochen "
-                    f"(HTTP {status}). Diese Teiltreffer wurden NICHT als "
-                    "vollständiger Abruf übernommen."
+                    f"(HTTP {status}). Dieser Teilabruf wurde NICHT als "
+                    "vollständige Suche übernommen. " + diagnostic[:400]
                 ) from exc
             raise RetrievalError(
-                f"OpenAlex HTTP {status}: {type(exc).__name__}. "
+                f"OpenAlex HTTP {status}: {diagnostic[:400] or type(exc).__name__}. "
                 "OQL, API-Key und Rate-/Budget-Limits prüfen."
             ) from exc
         if page == 1:
