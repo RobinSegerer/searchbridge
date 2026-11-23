@@ -1,0 +1,32 @@
+name: SearchBridge Streamlit app integration smoke
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/streamlit-smoke.yml
+
+jobs:
+  streamlit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install app dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run Streamlit initial render without external keys
+        run: |
+          python - <<'PY'
+          import streamlit
+          from streamlit.testing.v1 import AppTest
+          result = AppTest.from_file("app.py").run(timeout=100)
+          print("streamlit version", streamlit.__version__)
+          print("exception count", len(result.exception))
+          for issue in result.exception:
+              print("UI EXCEPTION:", issue.message)
+          assert not result.exception, "Streamlit initial app render failed"
+          print("SearchBridge UI successfully rendered")
+          PY
