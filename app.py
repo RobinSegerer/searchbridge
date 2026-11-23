@@ -246,7 +246,7 @@ with translate_tab:
                         for anchor in item["anchors"]:
                             st.markdown(
                                 f"**Themenblock {anchor['block']}:** "
-                                f"\`{anchor['query']}\`"
+                                f"`{anchor['query']}`"
                             )
                             st.link_button(
                                 f"Crossref: Block {anchor['block']} durchsuchen",
