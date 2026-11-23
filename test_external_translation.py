@@ -45,7 +45,7 @@ class ExternalTranslationTests(unittest.TestCase):
         q = '(education.ti. AND student*.ti,ab,kf.)'
         oa = translate_external(q)["OpenAlex"]
         self.assertIn("OQL", oa["endpoint"])
-        self.assertTrue(any("Gemischte" in x for x in oa["notes"]))
+        self.assertTrue(any("Unterschiedliche Suchfeldgrenzen" in x for x in oa["notes"]))
 
     def test_me_sh_expansion_is_just_free_text(self):
         q = '(exp Students/ OR exp "Self Concept"/)'
@@ -56,7 +56,7 @@ class ExternalTranslationTests(unittest.TestCase):
         self.assertIn('"Students, Nursing"', oa["query"])
         self.assertIn('"Self Concept"', oa["query"])
         self.assertTrue(any("FREITEXT" in x for x in oa["notes"]))
-        self.assertIn("exp Self Concept/", oa["unverified"])
+        self.assertIn('exp "Self Concept"/', oa["unverified"])
         self.assertNotIn("mesh:", oa["query"].lower())
 
     def test_semantic_scholar_question_mark_broadens_and_notes(self):
