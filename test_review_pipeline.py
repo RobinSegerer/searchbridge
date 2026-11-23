@@ -218,7 +218,8 @@ class TestOpenAIScreen(unittest.TestCase):
         self.assertEqual(out["decision"], "include")
         self.assertFalse(s.sent["store"])
         self.assertEqual(s.sent["text"]["format"]["strict"], True)
-        self.assertEqual(s.sent["model"], "gpt-4o-mini")
+        self.assertEqual(s.sent["model"], "gpt-6.1-terra")
+        self.assertEqual(s.sent["reasoning"]["effort"], "low")
 
     def test_nonverbatim_model_evidence_requires_manual_review(self):
         class Session:
