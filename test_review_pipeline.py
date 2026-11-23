@@ -220,6 +220,28 @@ class TestOpenAIScreen(unittest.TestCase):
         self.assertEqual(s.sent["text"]["format"]["strict"], True)
         self.assertEqual(s.sent["model"], "gpt-4o-mini")
 
+    def test_nonverbatim_model_evidence_requires_manual_review(self):
+        class Session:
+            def post(self, *args, **kwargs):
+                answer = {
+                    "decision": "exclude",
+                    "reason": "Wrong population",
+                    "evidence": "Children were enrolled",
+                    "uncertainty": "low",
+                }
+                return MockResponse({"output": [{
+                    "type": "message", "content": [{
+                        "type": "output_text", "text": json.dumps(answer)
+                    }]
+                }]})
+        study = make("RIS", "1", "University investigation",
+                     abstract="University students completed questionnaires.")
+        result = screen_one(
+            study, criteria="Include university student investigations",
+            key="fake", session=Session())
+        self.assertEqual(result["decision"], "manual_review")
+        self.assertEqual(result["uncertainty"], "high")
+
     def test_refusal_not_false_exclusion(self):
         class Session:
             def post(self, *args, **kwargs):
