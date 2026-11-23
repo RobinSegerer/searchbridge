@@ -351,7 +351,10 @@ def render() -> None:
         "bei Python aus einer Ähnlichkeitsprüfung ab 0.94."
     )
     st.dataframe([
-        {"Quelle": a.get("source"), "Treffer insgesamt": a.get("total_hits", ""),
+        {"Quelle": a.get("source"),
+         "Treffer insgesamt": (
+             str(a["total_hits"]) if a.get("total_hits") is not None else "—"
+         ),
          "Abgerufen": a.get("retrieved", 0),
          "Vollständig": a.get("complete", False),
          "Status": a.get("status")} for a in search_log
