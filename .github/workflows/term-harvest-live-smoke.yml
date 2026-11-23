@@ -1,0 +1,42 @@
+name: Live PubMed term harvesting smoke test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/term-harvest-live-smoke.yml
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install requests
+      - name: Retrieve real PubMed records and rank terms
+        run: |
+          python - <<'PY'
+          from pubmed_proximity import fetch_pubmed_candidates
+          from term_harvesting import title_tfidf, ranked_mesh
+
+          a = fetch_pubmed_candidates("Students[mh]", limit=10)
+          print("MeSH-query: Students[mh]")
+          print("PubMed total:", a.candidate_count, "Downloaded:", a.fetched)
+          titles = title_tfidf(a.records, min_df=1, top_n=10)
+          print("Title TF-IDF:", titles.rows)
+          assert a.fetched == 10
+          assert titles.rows
+
+          b = fetch_pubmed_candidates(
+              "(social media[tiab] AND university[tiab])", limit=10)
+          print("TIAB-query: social media and university")
+          print("PubMed total:", b.candidate_count, "Downloaded:", b.fetched)
+          print("With MeSH:", sum(bool(r.fields.get("MH")) for r in b.records))
+          mesh = ranked_mesh(b.records, top_n=10)
+          print("Assigned MeSH:", mesh.rows)
+          assert b.fetched == 10
+          assert all(r["Indexed records"] <= mesh.included_docs for r in mesh.rows)
+          PY
