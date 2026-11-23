@@ -35,22 +35,22 @@ def _flatten(n: Node, op: str) -> list[Node]:
 def _term(raw: str, notes: list[str]) -> str:
     term = raw.strip().strip('"\'')
     if not term:
-        raise ValueError("Leerer Ovid-Term im Semantic-Scholar-Translator.")
+        raise ValueError("Empty Ovid term in Semantic Scholar translator.")
     if re.search(r"\$\d+|[#^]", term):
-        notes.append(f"Ovid-Spezialtrunkierung {raw!r} ist nicht gleichwertig "
-                     "in Semantic Scholar vorhanden.")
+        notes.append(f"Ovid special truncation {raw!r} is not supported equivalently "
+                     "by Semantic Scholar.")
     term = re.sub(r"\$\d+", "*", term).replace("$", "*")
     if "?" in term:
         before = term
         def broaden(m: re.Match) -> str:
             prefix = m.group(1)
             if len(prefix) < 2:
-                raise ValueError(f"Zu kurze Wildcard-Basis für {raw!r}.")
+                raise ValueError(f"Wildcard prefix too short for {raw!r}.")
             return prefix + "*"
         term = re.sub(r"([^\W_]+)\?[^\W_]*", broaden, term)
         notes.append(
-            f"Ein-Zeichen-Wildcard {before!r} als breitere Präfix-Wildcard "
-            f"{term!r} übertragen. Ovid-Äquivalenz geht verloren."
+            f"Single-character wildcard {before!r} broadened to prefix wildcard "
+            f"{term!r}. Ovid equivalence is lost."
         )
     # Hyphens can behave as query operators in the Lucene-style parser.
     # Replace with a broadly matched multiword group rather than risking
@@ -58,20 +58,20 @@ def _term(raw: str, notes: list[str]) -> str:
     if "-" in term and not term.startswith("-"):
         before = term
         term = term.replace("-", " ")
-        notes.append(f"Bindestrich in {before!r} als Leerzeichen abgebildet "
-                     "(andere Tokenisierung und Phrasenpräzision).")
+        notes.append(f"Hyphen in {before!r} replaced with a space "
+                     "(different tokenization and phrase precision).")
         if "*" in term or "?" in term:
             tokens = [x for x in term.split() if x]
             return "(" + " ".join("+"+x for x in tokens) + ")"
     if " " in term:
         if "*" in term:
-            notes.append(f"Mehrwort-Term {raw!r} mit Wildcard wird als "
-                         "breite AND-Wortgruppe ausgegeben; keine exakte Phrase.")
+            notes.append(f"Multiword term {raw!r} with a wildcard is rendered as "
+                         "a broad AND word group, not an exact phrase.")
             return "(" + " ".join("+" + x for x in term.split()) + ")"
         return '"' + term + '"'
     if "*" in term and not term.endswith("*"):
-        notes.append(f"Nur Präfix-Wildcards sind garantiert; {term!r} "
-                     "bitte manuell prüfen.")
+        notes.append(f"Only prefix wildcards are guaranteed; verify {term!r} "
+                     "manually.")
     return term
 
 
@@ -104,29 +104,29 @@ def _render(node: Node, notes: list[str], lost: list[str],
     if node.kind == "heading":
         name, exploded, qualifier = heading_details(node.value)
         unverified.append(node.value)
-        notes.append(f"{node.value}: MeSH-Descriptor wird nur als Freitext "
-                     "gesucht; keine MeSH-Indexierung.")
+        notes.append(f"{node.value}: MeSH descriptor is searched as free text only "
+                     "; no MeSH indexing.")
         if qualifier:
-            lost.append(f"MeSH-Qualifier /{qualifier} entfällt.")
+            lost.append(f"MeSH qualifier /{qualifier} is omitted.")
         labels = [name]
         if exploded and explosions and explosions.get(name.casefold()):
             labels.extend(explosions[name.casefold()])
-            notes.append(f"exp {name}/: Unterbegriffe lediglich als "
-                         "Freitextalternativen aufgenommen.")
+            notes.append(f"exp {name}/: narrower terms added as "
+                         "free-text alternatives only.")
         return _or([_term(x, notes) for x in dict.fromkeys(labels)])
     if node.kind == "field":
         lost.append(
-            f"Ovid-Feldbeschränkung {node.value} nicht in S2 Bulk "
-            "(Suchtext: Titel und Abstract)."
+            f"Ovid field limit {node.value} unavailable in S2 Bulk "
+            "(searchable text: title and abstract)."
         )
         return _render(node.left, notes, lost, unverified, explosions)
     if node.kind == "near":
         left = _render(node.left, notes, lost, unverified, explosions)
         right = _render(node.right, notes, lost, unverified, explosions)
         lost.append(
-            f"{node.value}: durch breites AND ersetzt; die gerichtete "
-            "S2-Phrasensuche ist NICHT dasselbe wie bidirektionales Ovid ADJ. "
-            "Proximity nach dem Abruf lokal prüfen."
+            f"{node.value}: replaced with broad AND; the directional "
+            "S2 phrase search is NOT equivalent to bidirectional Ovid ADJ. "
+            "Check proximity locally after retrieval."
         )
         return _and([left, right])
     if node.kind == "bool":
@@ -138,7 +138,7 @@ def _render(node: Node, notes: list[str], lost: list[str],
             left = _render(node.left, notes, lost, unverified, explosions)
             right = _render(node.right, notes, lost, unverified, explosions)
             return "(" + _prefix_group("+", left) + " " + _prefix_group("-", right) + ")"
-    raise ValueError(f"Unbekannter Suchoperator: {node.kind}")
+    raise ValueError(f"Unknown search operator: {node.kind}")
 
 
 def translate_semantic_scholar(
@@ -146,14 +146,14 @@ def translate_semantic_scholar(
 ) -> dict:
     tree = parse_ovid(source)
     notes: list[str] = [
-        "Nur der Academic Graph Bulk-Endpunkt /paper/search/bulk "
-        "unterstützt diese Suchsyntax; NICHT die normale Websuche oder /paper/search.",
-        "S2 Bulk durchsucht Titel und Abstract. Er hat keine gleichwertigen "
-        "Ovid-Feldbegrenzungen und keine kontrollierte MeSH-Indexierung.",
-        "Es sind höchstens 1'000 Treffer pro Seite verfügbar; "
-        "für umfangreiche Suchläufe ist Token-Pagination nötig.",
-        "Ohne eigenen S2-API-Key kann HTTP 429 auftreten; dann ist die "
-        "Abfrage NICHT gegen den Live-Parser bestätigt.",
+        "Only the Academic Graph Bulk endpoint /paper/search/bulk "
+        "supports this syntax; NOT the web search or /paper/search.",
+        "S2 Bulk searches titles and abstracts. It does not have equivalent "
+        "Ovid field restrictions or controlled MeSH indexing.",
+        "At most 1,000 hits are available per page; "
+        "token pagination is required for larger searches.",
+        "Without an S2 API key, HTTP 429 may occur; in that case, the "
+        "query has NOT been validated against the live parser.",
     ]
     lost: list[str] = []
     unverified: list[str] = []
@@ -163,10 +163,10 @@ def translate_semantic_scholar(
     })
     if len(uri.encode("utf-8")) > MAX_S2_URL:
         notes.append(
-            "Die GET-URL ist zu lang für einen verlässlichen API-Aufruf. "
-            "Eine einzelne S2-Bulk-GET-Abfrage nicht ausführen; die "
-            "Suche in mehrere Konzeptabfragen aufteilen und die "
-            "identifizierten Publikationen lokal abgleichen."
+            "The GET URL is too long for a reliable API request. "
+            "Do not run one S2 Bulk GET request; divide the "
+            "search into multiple concept queries and "
+            "deduplicate identified publications locally."
         )
         uri = ""
     return {
