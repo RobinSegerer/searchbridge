@@ -28,6 +28,44 @@ from review_retrieval import (
 from openai_review_screening import screen_batch, DEFAULT_MODEL, SCREENING_MODELS
 
 
+def _record_fields(record) -> dict:
+    """Consistent bibliographic metadata in every screening result view."""
+    return {
+        "Title": record.title,
+        "Abstract": record.abstract,
+        "Authors": record.authors,
+        "Year": record.year,
+        "Journal": record.journal,
+        "DOI": record.doi,
+        "Database": "; ".join(record.sources) or record.source,
+    }
+
+
+def _screening_row(record, ai, overrides) -> dict:
+    human = overrides.get(record.uid, {})
+    if isinstance(human, dict):
+        human_decision = human.get("decision", "not_reviewed")
+        human_reason = human.get("reason", "")
+        reviewer = human.get("reviewer", "")
+        reviewed_utc = human.get("timestamp_utc", "")
+    else:
+        human_decision = human or "not_reviewed"
+        human_reason = reviewer = reviewed_utc = ""
+    suggestion = ai.get(record.uid, {})
+    return {
+        **_record_fields(record),
+        "UID": record.uid,
+        "Rank": record.rank_score,
+        "AI suggestion": suggestion.get("decision", ""),
+        "AI reason": suggestion.get("reason", ""),
+        "AI evidence": suggestion.get("evidence", ""),
+        "AI uncertainty": suggestion.get("uncertainty", ""),
+        "Human decision": human_decision,
+        "Human reason": human_reason,
+        "Reviewer": reviewer,
+        "Reviewed UTC": reviewed_utc,
+    }
+
 
 def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
     b = io.BytesIO()
@@ -55,17 +93,21 @@ def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
                    json.dumps(merge.audit, ensure_ascii=False, indent=2))
         z.writestr("fuzzy_candidates_manual_review.csv",
                    _dict_csv(merge.fuzzy_review))
+        # Screening exports are self-contained: metadata accompany every decision.
+        z.writestr("screening_results.csv", _dict_csv([
+            _screening_row(r, ai, overrides) for r in ordered
+        ]))
         z.writestr("human_decisions.csv", _dict_csv([
-            {"uid": uid,
-             "human_decision": info["decision"] if isinstance(info, dict) else info,
-             "human_reason": info.get("reason", "") if isinstance(info, dict) else "",
-             "reviewer": info.get("reviewer", "") if isinstance(info, dict) else "",
-             "decision_time_utc": info.get("timestamp_utc", "") if isinstance(info, dict) else ""}
-            for uid, info in overrides.items()
+            _screening_row(r, ai, overrides)
+            for r in ordered if r.uid in overrides
         ]))
         if ai:
             z.writestr("ai_screening_suggestions.json",
                        json.dumps(ai, ensure_ascii=False, indent=2))
+            z.writestr("ai_screening_suggestions.csv", _dict_csv([
+                _screening_row(r, ai, overrides)
+                for r in ordered if r.uid in ai
+            ]))
         z.writestr("screening_criteria_and_run_audit.json",
                    json.dumps(screening_runs, ensure_ascii=False, indent=2))
     return b.getvalue()
@@ -395,19 +437,7 @@ def render() -> None:
     )
     ai = st.session_state.setdefault("review_ai", {})
     human = st.session_state.setdefault("review_human", {})
-    items = []
-    for r in ordered[:300]:
-        choice = ai.get(r.uid, {})
-        items.append({
-            "uid": r.uid, "Title": r.title, "Year": r.year,
-            "DOI": r.doi, "Sources": ", ".join(r.sources),
-            "Rank": r.rank_score, "Abstract present": bool(r.abstract),
-            "AI suggestion": choice.get("decision", ""),
-            "AI reason": choice.get("reason", ""),
-            "Human decision": (human.get(r.uid, {}).get("decision", "not_reviewed")
-                               if isinstance(human.get(r.uid), dict)
-                               else human.get(r.uid, "not_reviewed")),
-        })
+    items = [_screening_row(r, ai, human) for r in ordered[:300]]
     st.dataframe(items, hide_index=True, use_container_width=True)
     if len(ordered) > 300:
         st.caption("Tabellenvorschau auf 300 Datensätze begrenzt; Exporte enthalten alle.")
@@ -506,11 +536,7 @@ def render() -> None:
         )
         with st.expander("OpenAI-Vorschläge mit Evidenz und Unsicherheit"):
             st.dataframe([
-                {"uid": r.uid, "Title": r.title,
-                 "AI": ai.get(r.uid, {}).get("decision", ""),
-                 "Reason": ai.get(r.uid, {}).get("reason", ""),
-                 "Evidence": ai.get(r.uid, {}).get("evidence", ""),
-                 "Uncertainty": ai.get(r.uid, {}).get("uncertainty", "")}
+                _screening_row(r, ai, human)
                 for r in ordered if r.uid in ai
             ], hide_index=True, use_container_width=True)
 
@@ -550,17 +576,19 @@ def render() -> None:
             key="review_selected_uid",
         )
         selected = options_by_uid[selected_uid]
-        st.markdown("##### " + selected.title)
+        st.markdown("##### " + (selected.title or "Untitled record"))
+        st.markdown("**Authors:** " + (selected.authors or "Not available"))
         st.caption(
-            f"Jahr: {selected.year or 'unbekannt'} · DOI: "
-            f"{selected.doi or 'nicht vorhanden'} · PMID: "
-            f"{selected.pmid or 'nicht vorhanden'}"
+            f"**Year:** {selected.year or 'Not available'} · "
+            f"**Journal:** {selected.journal or 'Not available'} · "
+            f"**DOI:** {selected.doi or 'Not available'}"
         )
         st.caption(
-            "Quelle(n): " + ", ".join(selected.sources)
-            + " · Rank: " + str(selected.rank_score)
+            "**Database:** " + ("; ".join(selected.sources) or selected.source or "Not available")
+            + f" · PMID: {selected.pmid or 'Not available'}"
+            + f" · Rank: {selected.rank_score}"
         )
-        st.markdown("**Abstract (vollständig)**")
+        st.markdown("**Abstract**")
         if selected.abstract:
             st.markdown(selected.abstract)
         else:
@@ -640,12 +668,7 @@ def render() -> None:
 
     with st.expander("Gespeicherte menschliche Entscheidungen"):
         st.dataframe([
-            {"UID": r.uid, "Titel": r.title,
-             "Entscheidung": _human_label(r.uid),
-             "Begründung": (human.get(r.uid) or {}).get("reason", "")
-                           if isinstance(human.get(r.uid), dict) else "",
-             "Abstract vorhanden": bool(r.abstract),
-             "KI-Vorschlag": ai.get(r.uid, {}).get("decision", "")}
+            _screening_row(r, ai, human)
             for r in ordered if _human_label(r.uid) != "not_reviewed"
         ], hide_index=True, use_container_width=True)
 
