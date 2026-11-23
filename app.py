@@ -262,7 +262,7 @@ with translate_tab:
                 if name == "OpenAlex" and item.get("request_json"):
                     if not item.get("proximity_preserved", True):
                         skipped = [x for x in item.get("removed", [])
-                                   if "nur für dieses Paar breites AND" in x]
+                                   if "broad AND for this pair" in x]
                         st.warning(
                             f"OpenAlex cannot use true proximity for {len(skipped)} pair(s) "
                             "because of the combination of Ovid wildcards. The affected "
@@ -419,8 +419,8 @@ with translate_tab:
                             "merge results by their identifiers."
                         )
                 for note in item["notes"]:
-                    if ("PROVISORISCHE" in note or "KEINE Emtree" in note or
-                            "kontrollierte Heading-Klausel(n) entfernt" in note):
+                    if ("UNVERIFIED" in note or "NOT an Emtree" in note or
+                            "controlled subject-heading clause(s) removed" in note):
                         st.warning(note)
                     else:
                         st.caption(note)
