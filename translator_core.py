@@ -251,7 +251,9 @@ def render(node: Node, target: str, notes: List[str]) -> str:
             fs = [x.strip().lower() for x in node.value.strip(".").split(",")]
             fs = ["id" if f in ("kf", "kw") else f for f in fs]
             fs = list(dict.fromkeys(fs))
-            return f"{inner if inner.startswith(chr(40)) and inner.endswith(chr(41)) else chr(40) + inner + chr(41)}.{':'.join(fs).replace(':', ',')}."
+            if not (inner.startswith("(") and inner.endswith(")")):
+                inner = f"({inner})"
+            return f"{inner}.{','.join(fs)}."
         if target == "Elsevier Embase.com":
             fs = [x.strip().lower() for x in node.value.strip(".").split(",")]
             fs = ["kw" if f in ("kf", "id") else f for f in fs]
