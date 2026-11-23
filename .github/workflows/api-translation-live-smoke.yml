@@ -1,0 +1,44 @@
+name: Live external API search syntax smoke check
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/api-translation-live-smoke.yml
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install HTTP client
+        run: python -m pip install requests
+      - name: Probe translated OpenAlex Crossref Semantic Scholar URLs
+        run: |
+          python - <<'PY'
+          import requests
+          from external_translation import translate_external
+          queries = {
+              "OpenAlex": '(university AND students).ti,ab.',
+              "Crossref": '(university AND students).ti,ab.',
+              "Semantic Scholar": '(university AND students).ti,ab.',
+          }
+          for service, original in queries.items():
+              item = translate_external(original)[service]
+              print(service, "query:", item["query"])
+              print(service, "endpoint:", item["endpoint"])
+              r = requests.get(item["url"], timeout=45)
+              print(service, "HTTP", r.status_code,
+                    "body sample:", r.text[:350])
+              if service in ("OpenAlex", "Crossref"):
+                  assert r.ok, f"{service} API error {r.status_code}"
+              elif r.status_code in (401, 403, 429):
+                  print("Semantic Scholar keyless API is gated/rate-limited; "
+                        "syntax remains unverified by this request.")
+              else:
+                  assert r.ok, "S2 query rejected: " + str(r.status_code)
+          PY
