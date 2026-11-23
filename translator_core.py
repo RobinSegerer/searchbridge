@@ -169,7 +169,7 @@ def heading_details(raw: str) -> Tuple[str, bool, str]:
     return name, bool(m.group(1)), (m.group(5) or "").lower()
 
 
-def simplify(node: Optional[Node], target: str, mappings: Dict[str, str], notes: List[str], removed: List[str]) -> Optional[Node]:
+def simplify(node: Optional[Node], target: str, mappings: Dict[str, str], notes: List[str], removed: List[str], unverified: List[str]) -> Optional[Node]:
     if node is None:
         return None
     if node.kind == "heading":
@@ -179,16 +179,27 @@ def simplify(node: Optional[Node], target: str, mappings: Dict[str, str], notes:
         if mapped:
             notes.append(f"Mapping manuell vorgegeben: {name} → {mapped}; Hierarchie/Qualifier bitte prüfen.")
             return Node("mapped_heading", ("exp " if exploded else "") + mapped + "/" + (subheading if subheading else ""))
+        # Do not silently delete subject headings from databases that support them.
+        # Ovid PsycINFO uses the same heading syntax but *not* the same thesaurus;
+        # retain the original term only as an explicitly unverified candidate.
+        if target == "Ovid PsycINFO":
+            unverified.append(node.value)
+            return Node("mapped_heading", node.value)
+        # In Embase.com, never invent an Emtree descriptor. Retain the concept
+        # as explicitly labelled title/abstract/keyword free text instead.
+        if target == "Elsevier Embase.com":
+            unverified.append(node.value)
+            return Node("fallback_heading", name)
         removed.append(node.value)
         return None
-    if node.kind in ("text", "mapped_heading"):
+    if node.kind in ("text", "mapped_heading", "fallback_heading"):
         return node
     if node.kind == "field":
-        child = simplify(node.left, target, mappings, notes, removed)
+        child = simplify(node.left, target, mappings, notes, removed, unverified)
         return Node("field", node.value, child) if child is not None else None
     if node.kind in ("near", "bool"):
-        left = simplify(node.left, target, mappings, notes, removed)
-        right = simplify(node.right, target, mappings, notes, removed)
+        left = simplify(node.left, target, mappings, notes, removed, unverified)
+        right = simplify(node.right, target, mappings, notes, removed, unverified)
         if left is None and right is None:
             return None
         if left is None or right is None:
@@ -221,6 +232,9 @@ def _term(text: str, target: str, notes: List[str]) -> str:
 def render(node: Node, target: str, notes: List[str]) -> str:
     if node.kind == "text":
         return _term(node.value, target, notes)
+    if node.kind == "fallback_heading":
+        # An *explicitly documented* free-text substitute, not an Emtree match.
+        return _term(node.value, target, notes) + ":ti,ab,kw"
     if node.kind == "mapped_heading":
         name, exploded, subheading = heading_details(node.value)
         if target == "Ovid PsycINFO":
@@ -237,7 +251,7 @@ def render(node: Node, target: str, notes: List[str]) -> str:
             fs = [x.strip().lower() for x in node.value.strip(".").split(",")]
             fs = ["id" if f in ("kf", "kw") else f for f in fs]
             fs = list(dict.fromkeys(fs))
-            return f"({inner}).{','.join(fs)}."
+            return f"{inner if inner.startswith(chr(40)) and inner.endswith(chr(41)) else chr(40) + inner + chr(41)}.{':'.join(fs).replace(':', ',')}."
         if target == "Elsevier Embase.com":
             fs = [x.strip().lower() for x in node.value.strip(".").split(",")]
             fs = ["kw" if f in ("kf", "id") else f for f in fs]
@@ -266,10 +280,19 @@ def render(node: Node, target: str, notes: List[str]) -> str:
             op = f"W/{n-1}"
         return f"({render(node.left,target,notes)} {op} {render(node.right,target,notes)})"
     if node.kind == "bool":
-        left = render(node.left, target, notes)
-        right = render(node.right, target, notes)
         op = "AND NOT" if node.value == "NOT" and target == "Scopus" else node.value
-        return f"({left} {op} {right})"
+        # Flatten associative OR/AND branches; preserve meaningful grouping.
+        if node.value in ("OR", "AND"):
+            terms = []
+            def collect(cur):
+                if cur.kind == "bool" and cur.value == node.value:
+                    collect(cur.left)
+                    collect(cur.right)
+                else:
+                    terms.append(render(cur, target, notes))
+            collect(node)
+            return "(" + f" {op} ".join(terms) + ")"
+        return f"({render(node.left, target, notes)} {op} {render(node.right, target, notes)})"
     raise ParseError(f"Unbekannter Knotentyp: {node.kind}")
 
 
@@ -277,12 +300,13 @@ def translate(source: str, mappings: Optional[Dict[str, Dict[str, str]]] = None)
     """Return per-database query and warnings. No network calls or LLMs."""
     tree = parse_ovid(source)
     mapping_sets = mappings or {}
-    outputs: Dict[str, dict] = {"Ovid MEDLINE": {"query": source.strip(), "removed": [], "notes": ["Originale Ovid-MEDLINE-Strategie."]}}
+    outputs: Dict[str, dict] = {"Ovid MEDLINE": {"query": source.strip(), "removed": [], "unverified": [], "notes": ["Originale Ovid-MEDLINE-Strategie."]}}
     for target in _TARGETS:
         notes: List[str] = []
         removed: List[str] = []
+        unverified: List[str] = []
         manual = {k.casefold(): v for k, v in mapping_sets.get(target, {}).items()}
-        reduced = simplify(tree, target, manual, notes, removed)
+        reduced = simplify(tree, target, manual, notes, removed, unverified)
         if reduced is None:
             result = ""
             notes.append("Kein Freitext nach Entfernung der kontrollierten Descriptors übrig.")
@@ -294,9 +318,11 @@ def translate(source: str, mappings: Optional[Dict[str, Dict[str, str]]] = None)
                 result = f"TITLE-ABS-KEY({result})"
         if removed:
             notes.insert(0, f"{len(removed)} kontrollierte Heading-Klausel(n) entfernt (nicht als Freitext ersetzt).")
-            if target in ("Ovid PsycINFO", "Elsevier Embase.com"):
-                notes.append("Unmapped MeSH descriptors: APA-Thesaurus-/Emtree-Mapping bleibt erforderlich; die ausgegebene Suche ist nur ein Freitextentwurf.")
+            notes.append("Die Trefferzahl kann abweichen, weil indexierungsbasierte Treffer entfallen.")
+        if unverified:
+            if target == "Ovid PsycINFO":
+                notes.insert(0, f"{len(unverified)} MeSH-Heading(s) als PROVISORISCHE Ovid-PsycINFO-Headings erhalten. APA-Thesaurus-Begriffe, Explosion und Qualifier müssen geprüft werden; nicht als validierte Suche verwenden.")
             else:
-                notes.append("Die Trefferzahl kann abweichen, weil indexierungsbasierte Treffer entfallen.")
-        outputs[target] = {"query": result, "removed": list(dict.fromkeys(removed)), "notes": list(dict.fromkeys(notes))}
+                notes.insert(0, f"{len(unverified)} MeSH-Heading(s) als Freitext-Fallback (:ti,ab,kw) erhalten. Dies ist KEINE Emtree-Übersetzung; indexierungsbasierte Treffer können fehlen. Emtree-Mapping erforderlich.")
+        outputs[target] = {"query": result, "removed": list(dict.fromkeys(removed)), "unverified": list(dict.fromkeys(unverified)), "notes": list(dict.fromkeys(notes))}
     return outputs
