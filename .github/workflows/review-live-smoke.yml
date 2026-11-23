@@ -26,7 +26,17 @@ jobs:
           print('PubMed total:', p.total, 'retrieved:', len(p.records),
                 'first title:', p.records[0].title if p.records else '(none)')
           assert len(p.records) == 5
-          a = openalex_search("get works about social media", limit=5)
+          import requests
+          for candidate in ("get works about social media",
+                            'get works about "social media"',
+                            "get works about kelp"):
+              check = requests.post(
+                  "https://api.openalex.org/",
+                  json={"oql": candidate, "per_page": 1, "page": 1},
+                  timeout=40)
+              print("OQL diagnostic", repr(candidate), "HTTP", check.status_code,
+                    "response", check.text[:800])
+          a = openalex_search('get works about "social media"', limit=5)
           print('OpenAlex total:', a.total, 'retrieved:', len(a.records),
                 'first title:', a.records[0].title if a.records else '(none)')
           assert len(a.records) == 5
