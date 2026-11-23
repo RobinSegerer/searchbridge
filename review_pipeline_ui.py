@@ -87,7 +87,7 @@ def render() -> None:
     st.markdown("#### 1 · Datenquellen auswählen und abfragen")
     translations = st.session_state.get("translations") or {}
     initial_oa = (translations.get("OpenAlex") or {}).get(
-        "query", "get works about academic self concept")
+        "query", 'get works about "academic self concept"')
     initial_scopus = (translations.get("Scopus") or {}).get("query", "")
 
     with st.form("review_source_form"):
@@ -294,11 +294,11 @@ def render() -> None:
     )
     criteria = st.text_area(
         "Einschlusskriterien / PICO / PCC (konkret und operationalisiert)",
-        value=("Empirical quantitative or qualitative study of university "
-               "students; examines social media use and academic self-concept "
-               "as explicit constructs. Exclude clearly non-empirical "
-               "articles, reviews, and samples not including university "
-               "students. Missing information requires manual review."),
+        value="",
+        placeholder=("Beschreibe alle obligatorischen Einschlusskriterien "
+                     "und explizite Ausschlusskriterien (PICO/PCC). "
+                     "Nur eindeutig nicht erfüllte Kriterien rechtfertigen "
+                     "einen Exclude-Vorschlag."),
         height=125, key="review_eligibility",
     )
     q1, q2, q3 = st.columns([1, 1, 1])
@@ -324,7 +324,7 @@ def render() -> None:
     )
     if st.button(
         "OpenAI-Vorscreening ausführen",
-        disabled=not share or not openai_key.strip(),
+        disabled=not share or not openai_key.strip() or len(criteria.strip()) < 12,
         key="review_screen_start",
     ):
         bar = st.progress(0.0)
