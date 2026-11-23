@@ -28,7 +28,7 @@ from review_retrieval import (
 from openai_review_screening import screen_batch
 
 
-def _bundle(merge, ordered, search_log, ai, overrides) -> bytes:
+def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
     b = io.BytesIO()
     with zipfile.ZipFile(b, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("deduplicated.csv", csv_bytes(ordered, ai))
@@ -60,6 +60,8 @@ def _bundle(merge, ordered, search_log, ai, overrides) -> bytes:
         if ai:
             z.writestr("ai_screening_suggestions.json",
                        json.dumps(ai, ensure_ascii=False, indent=2))
+        z.writestr("screening_criteria_and_run_audit.json",
+                   json.dumps(screening_runs, ensure_ascii=False, indent=2))
     return b.getvalue()
 
 
@@ -201,6 +203,7 @@ def render() -> None:
                 st.session_state.review_data = (merged, audit)
                 st.session_state.review_ai = {}
                 st.session_state.review_human = {}
+                st.session_state.review_screening_runs = []
                 st.success(
                     f"{len(raw):,} Datensätze eingelesen → "
                     f"{len(merged.records):,} nach Deduplikation."
@@ -285,7 +288,9 @@ def render() -> None:
         "Review-Entscheid. Titel und Abstracts werden dabei an die OpenAI API "
         "übertragen und es können API-Kosten anfallen. "
         "Nur Records mit vollständigem Kontext sollten verwendet werden. "
-        "Publikationen ohne Abstract erhalten grundsätzlich MANUAL REVIEW."
+        "Publikationen ohne Abstract erhalten grundsätzlich MANUAL REVIEW. "
+        "Bei lizenzierten Daten (z. B. Scopus) müssen Weitergaberechte "
+        "zusätzlich geprüft werden."
     )
     criteria = st.text_area(
         "Einschlusskriterien / PICO / PCC (konkret und operationalisiert)",
@@ -331,6 +336,18 @@ def render() -> None:
             )
         bar.empty()
         st.session_state.review_ai.update(result.decisions)
+        st.session_state.setdefault("review_screening_runs", []).append({
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "criteria": criteria,
+            "model": result.model,
+            "prompt_protocol": "SearchBridge conservative title-abstract v1",
+            "attempted": result.attempted,
+            "count_by_suggestion": dict(Counter(
+                x.get("decision") for x in result.decisions.values()
+            )),
+            "errors": result.errors,
+            "note": "Only AI suggestions. Human decisions are separate.",
+        })
         for err in result.errors:
             st.warning(err)
         st.success(
@@ -408,7 +425,8 @@ def render() -> None:
     with c3:
         st.download_button(
             "Audit + Datensätze + Screening (ZIP)",
-            _bundle(merged, ordered, search_log, ai, human),
+            _bundle(merged, ordered, search_log, ai, human,
+                    st.session_state.get("review_screening_runs", [])),
             "searchbridge_review_pipeline.zip",
             "application/zip", use_container_width=True, type="primary")
     st.info(
