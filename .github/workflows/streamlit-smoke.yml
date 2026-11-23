@@ -73,4 +73,48 @@ jobs:
               "Default screening model must be GPT-6.1 Terra"
           )
           print("Human review full abstract and Terra default verified")
+
+          # Simulate a PubMed API source with page-by-page progress. No real
+          # network requests and no R packages are required for this UI check.
+          from unittest.mock import patch
+          from review_retrieval import SourceResult
+          progress_events = []
+          def mocked_pubmed(query, limit, email="", api_key="", progress=None):
+              progress(1, 2)
+              progress_events.append((1, 2))
+              progress(2, 2)
+              progress_events.append((2, 2))
+              return SourceResult(
+                  "PubMed",
+                  [
+                      ReviewRecord(
+                          uid="mocked-review-1",
+                          title="Social media study in students",
+                          abstract="Original full abstract for the mocked retrieval.",
+                          year="2025", doi="10.1000/mock",
+                          source="PubMed", source_id="111"
+                      ),
+                      ReviewRecord(
+                          uid="mocked-review-2",
+                          title="Social media study in students",
+                          abstract="Duplicate with a better abstract.",
+                          year="2025", doi="10.1000/mock",
+                          source="PubMed", source_id="222"
+                      ),
+                  ],
+                  2, query, True
+              )
+          with patch("review_pipeline_ui.pubmed_search", mocked_pubmed):
+              result.button(key="review_fetch_and_merge").click()
+              result.run(timeout=100)
+          for issue in result.exception:
+              print("PIPELINE PROGRESS UI EXCEPTION:", issue.message)
+          assert not result.exception, "Progress-enabled pipeline failed"
+          assert progress_events == [(1, 2), (2, 2)]
+          merged, audit = result.session_state["review_data"]
+          assert merged.input_count == 2 and merged.duplicates_removed == 1
+          assert len(merged.records) == 1
+          assert any(line.get("dedup_engine", "").startswith("Python")
+                     for line in audit)
+          print("Progress-enabled source retrieval and fast DOI dedup verified")
           PY
