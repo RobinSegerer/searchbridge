@@ -11,6 +11,7 @@ separately. No data is silently represented as complete.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 import time
 
 import requests
@@ -50,9 +51,10 @@ def _http() -> requests.Session:
 
 
 def pubmed_search(query: str, limit: int, *, email: str = "",
-                  api_key: str = "") -> SourceResult:
+                  api_key: str = "",
+                  progress: Callable[[int, int], None] | None = None) -> SourceResult:
     r = fetch_pubmed_candidates(
-        query, limit=limit, email=email, api_key=api_key
+        query, limit=limit, email=email, api_key=api_key, progress=progress
     )
     records = from_ris(r.records, "PubMed")
     return SourceResult(
@@ -64,7 +66,8 @@ def pubmed_search(query: str, limit: int, *, email: str = "",
 
 
 def openalex_search(oql: str, limit: int = 100, *,
-                    api_key: str = "") -> SourceResult:
+                    api_key: str = "",
+                    progress: Callable[[int, int], None] | None = None) -> SourceResult:
     if not oql.strip().casefold().startswith("get works"):
         raise ValueError(
             "OpenAlex verlangt OQL beginnend mit 'get works'. "
@@ -128,6 +131,8 @@ def openalex_search(oql: str, limit: int = 100, *,
         if not isinstance(items, list):
             raise RetrievalError("OpenAlex: unerwartetes results-Format.")
         records.extend(from_openalex_results(items))
+        if progress:
+            progress(len(records), min(limit, total) if total else limit)
         if not items or len(items) < count:
             break
         page += 1
@@ -145,7 +150,8 @@ def openalex_search(oql: str, limit: int = 100, *,
 
 
 def scopus_search(query: str, limit: int = 200, *, api_key: str,
-                  inst_token: str = "") -> SourceResult:
+                  inst_token: str = "",
+                  progress: Callable[[int, int], None] | None = None) -> SourceResult:
     if not api_key.strip():
         raise ValueError("Scopus Search API erfordert einen Elsevier API-Key.")
     if not 1 <= limit <= 2000:
@@ -192,6 +198,8 @@ def scopus_search(query: str, limit: int = 200, *, api_key: str,
         if not isinstance(block, list):
             raise RetrievalError("Scopus lieferte kein standardisiertes Entry-Array.")
         entries.extend(block)
+        if progress:
+            progress(len(entries), min(limit, total) if total else limit)
         if not block or len(block) < count:
             break
         offset += len(block)
