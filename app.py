@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 from translator_core import translate, ParseError
 from external_translation import translate_external
+from pubmed_translation import translate_pubmed
 from ris_proximity import (
     ProximityClause, parse_ris, extract_clauses, check_ris_records,
     html_report, csv_bytes, ris_bytes,
@@ -154,6 +155,7 @@ with translate_tab:
                 "Elsevier Embase.com": parse_mappings(em_map),
             }
             results = translate(source, mappings)
+            results["PubMed"] = translate_pubmed(source)
             results.update(translate_external(source))
             st.session_state.translations = results
             st.session_state.translated_source = source
@@ -178,6 +180,85 @@ with translate_tab:
                     st.warning("Keine validierte 1:1-Übersetzung. Die API-Abfrage verändert die Suchsemantik; bitte alle Hinweise prüfen.")
                     st.caption(f"API-Endpunkt: {item['endpoint']} · Modus: {item['mode']}")
                 st.code(item["query"], language=None)
+                if name == "PubMed":
+                    if not item.get("proximity_preserved", True):
+                        st.warning(
+                            "Einige Ovid-adjN-Zweige enthalten Wildcards bzw. "
+                            "nicht unterstützte PubMed-Näheoperanden. "
+                            "Diese Klauseln sind ausdrücklich als "
+                            "breitere AND-Kandidatenabfragen ausgegeben. "
+                            "Die nicht exakt übertragbaren Ausdrücke "
+                            "stehen unten im Verlustbericht."
+                        )
+                    if item.get("requires_post"):
+                        st.info(
+                            "Für die vollständige PubMed-Abfrage ist der "
+                            "Browser-Link zu lang. Die Suche wurde NICHT "
+                            "abgeschnitten: Sie kann kopiert oder per "
+                            "NCBI ESearch POST geprüft werden."
+                        )
+                    with st.expander(
+                        "PubMed-Syntax und Trefferzahl mit NCBI ESearch überprüfen",
+                        expanded=bool(item.get("requires_post"))
+                    ):
+                        ncbikey = st.text_input(
+                            "NCBI-API-Key (optional)", type="password",
+                            key="translated_pubmed_api_key",
+                        )
+                        ncbi_email = st.text_input(
+                            "NCBI-E-Mail (optional)", key="translated_pubmed_email",
+                        )
+                        if st.button(
+                            "PubMed-Suche prüfen (ESearch POST)",
+                            key="validate_translated_pubmed"
+                        ):
+                            params = {
+                                "db": "pubmed", "retmode": "json",
+                                "retmax": 0, "term": item["query"],
+                                "tool": "SearchBridge",
+                            }
+                            if ncbikey.strip():
+                                params["api_key"] = ncbikey.strip()
+                            if ncbi_email.strip():
+                                params["email"] = ncbi_email.strip()
+                            try:
+                                with st.spinner("PubMed ESearch wird abgefragt"):
+                                    response = requests.post(
+                                        "https://eutils.ncbi.nlm.nih.gov/"
+                                        "entrez/eutils/esearch.fcgi",
+                                        data=params, timeout=(12, 90),
+                                    )
+                                    response.raise_for_status()
+                                    payload = response.json()
+                                data = payload.get("esearchresult") or {}
+                                if data.get("error"):
+                                    st.error(str(data["error"]))
+                                else:
+                                    st.success(
+                                        f"PubMed ESearch: "
+                                        f"{int(data.get('count', 0)):,} Treffer."
+                                    )
+                                    translated = data.get("querytranslation", "")
+                                    if translated:
+                                        with st.expander("PubMed Search Details"):
+                                            st.code(translated, language=None)
+                                    warnings = data.get("warninglist") or {}
+                                    for label, values in warnings.items():
+                                        if values:
+                                            st.warning(
+                                                f"{label}: {', '.join(values) if isinstance(values, list) else values}"
+                                            )
+                                    st.caption(
+                                        "ESearch prüft die Suchausführung, "
+                                        "nicht die Retrieval-Äquivalenz "
+                                        "zwischen PubMed und Ovid MEDLINE."
+                                    )
+                            except (requests.RequestException, ValueError) as exc:
+                                st.error(
+                                    f"PubMed Live-Prüfung fehlgeschlagen: "
+                                    f"{type(exc).__name__}. "
+                                    "Zugang, Syntax und NCBI-Limits prüfen."
+                                )
                 if name == "OpenAlex" and item.get("request_json"):
                     if not item.get("proximity_preserved", True):
                         skipped = [x for x in item.get("removed", [])
@@ -229,7 +310,9 @@ with translate_tab:
                                 except (requests.RequestException, ValueError) as exc:
                                     st.error(f"OpenAlex-Syntaxvalidierung nicht verfügbar: {exc}")
                 if item.get("url"):
-                    if name == "OpenAlex":
+                    if name == "PubMed":
+                        st.link_button("PubMed-Suche öffnen", item["url"])
+                    elif name == "OpenAlex":
                         st.link_button("OpenAlex API-Abfrage öffnen", item["url"])
                     elif name == "Crossref":
                         st.link_button("Crossref API-Abfrage öffnen", item["url"])
@@ -610,6 +693,19 @@ with help_tab:
       and uncertainty; only human decisions count as final.
       The full run exports RIS, CSV, JSON audits, deduplication logs,
       source counts, AI suggestions and human decisions.
+    - The PubMed translator converts Ovid MeSH with exp to [mh] and
+      non-exploded headings to [mh:noexp], and maps .ti,ab,kf. to
+      [tiab] (which also includes author keywords/Other Term). For
+      untruncated Ovid ADJn, it generates genuine unordered PubMed
+      proximity [tiab:~(N-1)] with explicit OR combinations. PubMed
+      ignores proximity when a wildcard appears, so truncated ADJn
+      clauses are intentionally broadened to grouped AND candidates
+      and flagged for local proximity rechecking. The Ovid short
+      prefix Web* and single-character wom?n have special, documented
+      approximations because PubMed has different wildcard rules.
+      Long queries can be tested through the NCBI ESearch POST button
+      without losing query text; actual NCBI Search Details and warning
+      messages are displayed.
     - The translator rewrites supported Ovid operators and field codes.
     - The OpenAlex tab now generates native **OQL proximity** rather than
       replacing Ovid adjN with AND. adj2 maps to within 1 intervening word,
