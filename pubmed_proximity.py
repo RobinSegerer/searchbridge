@@ -37,14 +37,14 @@ def parsed_terms(expression: str) -> tuple[str, ...]:
     if text.startswith("(") and text.endswith(")"):
         text = text[1:-1].strip()
     if not text:
-        raise ValueError("Bitte mindestens einen Begriff pro Gruppe angeben.")
+        raise ValueError("Provide at least one term per group.")
     if re.search(r"\b(?:AND|NOT|ADJ\d+)\b", text, re.I):
-        raise ValueError("Je Wortgruppe bitte nur OR-verknüpfte Begriffe eingeben, kein AND/NOT/adjN.")
+        raise ValueError("Enter OR-connected terms only in each group, no AND/NOT/adjN.")
     terms = [t.strip().strip('"\'').strip() for t in OR_SEPARATOR.split(text)]
     if not terms or any(not x for x in terms):
         raise ValueError("Leerer Begriff in der OR-Liste.")
     if any(re.search(r"[()\[\]{}|;]", t) for t in terms):
-        raise ValueError("Keine verschachtelten Klammern oder Feld-Tags in den Wortgruppen verwenden.")
+        raise ValueError("Do not use nested parentheses or field tags in term groups.")
     if len(terms) > 100:
         raise ValueError("Maximal 100 Synonyme pro Wortgruppe erlaubt.")
     for term in terms:
@@ -69,7 +69,7 @@ def _broaden_term_for_pubmed(term: str) -> str:
         if pos >= 0:
             stem = part[:pos]
             if len(stem) < 3:
-                raise ValueError(f"Wildcard zu früh im Begriff {term!r}; breitere PubMed-Suche nicht zuverlässig erstellbar.")
+                raise ValueError(f"Wildcard too early in term {term!r}; a reliable broader PubMed query cannot be built.")
             part = stem + "*"
         clauses.append(f"{part}[tiab]")
     return "(" + " AND ".join(clauses) + ")" if len(clauses) > 1 else clauses[0]
@@ -77,7 +77,7 @@ def _broaden_term_for_pubmed(term: str) -> str:
 
 def build_pubmed_and_query(left: tuple[str, ...], right: tuple[str, ...]) -> str:
     if not left or not right:
-        raise ValueError("Beide Wortgruppen müssen Begriffe enthalten.")
+        raise ValueError("Both groups must contain terms.")
     a = " OR ".join(_broaden_term_for_pubmed(t) for t in left)
     b = " OR ".join(_broaden_term_for_pubmed(t) for t in right)
     return f"({a}) AND ({b})"
@@ -105,7 +105,7 @@ def pubmed_xml_to_ris(xml: bytes, start_number: int = 1) -> list[RISRecord]:
     try:
         doc = ET.fromstring(xml)
     except ET.ParseError as exc:
-        raise PubMedError(f"Ungültige EFetch-XML-Antwort: {exc}") from exc
+        raise PubMedError(f"Invalid EFetch XML response: {exc}") from exc
     result = []
     for el in doc.findall(".//PubmedArticle"):
         pmid = _first(el, "./MedlineCitation/PMID")
@@ -217,7 +217,7 @@ class NCBIClient:
             return resp
         except requests.RequestException as exc:
             status = getattr(getattr(exc, "response", None), "status_code", "?")
-            raise PubMedError(f"NCBI E-utilities-Anfrage fehlgeschlagen (HTTP {status}; {type(exc).__name__}). Bitte Netzwerk, API-Key und NCBI-Limits prüfen.") from exc
+            raise PubMedError(f"NCBI E-utilities request failed (HTTP {status}; {type(exc).__name__}). Check network, API key and NCBI limits.") from exc
 
 
 def fetch_pubmed_candidates(query: str, limit: int = 1000,
@@ -234,13 +234,13 @@ def fetch_pubmed_candidates(query: str, limit: int = 1000,
     except (ValueError, KeyError, TypeError) as exc:
         raise PubMedError(f"Unerwartetes PubMed ESearch-Ergebnis: {response.text[:500]}") from exc
     if data.get("ERROR") or data.get("ErrorList", {}).get("PhraseNotFound"):
-        raise PubMedError(f"PubMed kann die Suchanfrage nicht verarbeiten: {data.get('ERROR') or data.get('ErrorList')}")
+        raise PubMedError(f"PubMed cannot process the query: {data.get('ERROR') or data.get('ErrorList')}")
     target = min(total, limit)
     records = []
     if target:
         webenv, querykey = data.get("webenv"), data.get("querykey")
         if not webenv or not querykey:
-            raise PubMedError("PubMed lieferte keinen WebEnv/query_key für den EFetch-Abruf.")
+            raise PubMedError("PubMed did not return a WebEnv/query_key for EFetch.")
         for offset in range(0, target, 200):
             count = min(200, target - offset)
             response = client.get("efetch", {"db": "pubmed", "query_key": querykey,
@@ -248,7 +248,7 @@ def fetch_pubmed_candidates(query: str, limit: int = 1000,
                                              "retstart": offset, "retmax": count})
             batch = pubmed_xml_to_ris(response.content, start_number=len(records) + 1)
             if not batch and count:
-                raise PubMedError(f"Keine PubMedArticle-Datensätze im EFetch-Batch ab Position {offset}.")
+                raise PubMedError(f"No PubMedArticle records in EFetch batch at offset {offset}.")
             records.extend(batch)
             if progress:
                 progress(min(target, offset + count), target)
