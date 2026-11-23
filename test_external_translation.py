@@ -21,7 +21,7 @@ class ExternalTranslationTests(unittest.TestCase):
         self.assertIn("exp Students/", oa["unverified"])
         self.assertTrue(any("ADJ2" in x for x in oa["notes"]))
         self.assertIn("bulk", s2["endpoint"])
-        self.assertIn("+((", s2["query"])
+        self.assertIn("+(+", s2["query"])
         self.assertIn(" | ", s2["query"])
         self.assertNotIn("ADJ2", s2["query"])
         self.assertTrue(any("Feldbeschränkung" in x for x in s2["removed"]))
