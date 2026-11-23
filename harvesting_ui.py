@@ -50,7 +50,7 @@ def _rank_columns(mode: str, is_title: bool, diversify: bool) -> list[str]:
     else:
         base = ["Rank", "MeSH descriptor", "Indexed records",
                 "% indexed records", "Major topic records", "% all retrieved"]
-    if mode == "TF-IDF / Häufigkeit":
+    if mode == "TF-IDF / Frequency":
         return base
     prefix = base[:2] + ["Semantic similarity", "Semantic rank"]
     prefix += ["TF-IDF rank" if is_title else "Frequency rank"]
@@ -62,15 +62,15 @@ def _rank_columns(mode: str, is_title: bool, diversify: bool) -> list[str]:
 
 
 def render() -> None:
-    st.subheader("Term Harvesting aus PubMed")
+    st.subheader("Term Harvesting from PubMed")
     st.caption(
-        "MeSH-Suche → Titelwörter/-phrasen oder TIAB-Suche → vergebene MeSH-Descriptors. "
-        "Vergleiche das bisherige statistische Ranking mit semantischer Nähe "
-        "und einem Hybrid-Ranking. Keine generative KI."
+        "MeSH search → title words/phrases, or TIAB search → assigned MeSH descriptors. "
+        "Compare statistical ranking with semantic similarity "
+        "and a hybrid ranking. No generative AI."
     )
     direction = st.radio(
-        "Auswertungsrichtung",
-        ["MeSH → Titelbegriffe", "TIAB → MeSH-Descriptors"],
+        "Analysis direction",
+        ["MeSH → Title terms", "TIAB → MeSH descriptors"],
         horizontal=True, key="harvest_direction",
     )
     is_title = direction.startswith("MeSH")
@@ -80,38 +80,38 @@ def render() -> None:
     )
     with st.form("harvest_pubmed_form"):
         st.caption(
-            "PubMed-Syntax: z. B. 'Students'[mh] mit Explosion oder "
-            "'Students'[mh:noexp] ohne Explosion; Freitext mit [tiab]."
+            "PubMed syntax: e.g. 'Students'[mh] with explosion or "
+            "'Students'[mh:noexp] without explosion; free text uses [tiab]."
         )
         query = st.text_area(
-            "PubMed-Suchanfrage", value=default_query,
+            "PubMed query", value=default_query,
             key=("harvest_query_mesh" if is_title else "harvest_query_tiab"),
             height=95,
         )
         c1, c2, c3 = st.columns([2, 1, 1])
         with c1:
             sample_limit = st.number_input(
-                "Maximal abzurufende Publikationen", min_value=1,
+                "Maximum publications to retrieve", min_value=1,
                 max_value=10000, value=500, step=100, key="harvest_limit")
         with c2:
-            email = st.text_input("NCBI-E-Mail (optional)", key="harvest_email")
+            email = st.text_input("NCBI email (optional)", key="harvest_email")
         with c3:
             api_key = st.text_input(
-                "NCBI-API-Key (optional)", type="password", key="harvest_key")
+                "NCBI API key (optional)", type="password", key="harvest_key")
         fetch = st.form_submit_button(
-            "PubMed abrufen", type="primary")
+            "Retrieve from PubMed", type="primary")
 
     if fetch:
         if not query.strip():
-            st.error("Bitte eine PubMed-Abfrage eingeben.")
+            st.error("Enter a PubMed query.")
         elif is_title and not re.search(
             r"\[(?:mh|mesh|majr|mesh terms)(?::noexp)?\]", query, re.I
         ):
-            st.error("Für MeSH → Titel mindestens einen MeSH-Tag [mh] eingeben.")
+            st.error("For MeSH → Title, include at least one MeSH [mh] tag.")
         elif not is_title and not re.search(
             r"\[(?:tiab|title/abstract)\]", query, re.I
         ):
-            st.error("Für TIAB → MeSH mindestens einen [tiab]-Tag eingeben.")
+            st.error("For TIAB → MeSH, include at least one [tiab] tag.")
         else:
             st.session_state.pop("harvest_data", None)
             bar = st.progress(0.0)
@@ -128,11 +128,11 @@ def render() -> None:
                     retrieved, direction, query.strip()
                 )
                 st.success(
-                    f"{retrieved.fetched:,} von "
-                    f"{retrieved.candidate_count:,} Treffern heruntergeladen."
+                    f"{retrieved.fetched:,} of "
+                    f"{retrieved.candidate_count:,} hits downloaded."
                 )
             except (PubMedError, ValueError) as exc:
-                st.error(f"PubMed-Abruf fehlgeschlagen: {exc}")
+                st.error(f"PubMed retrieval failed: {exc}")
             finally:
                 bar.empty()
 
@@ -140,60 +140,60 @@ def render() -> None:
         return
     retrieved, saved_direction, saved_query = st.session_state.harvest_data
     if direction != saved_direction or query.strip() != saved_query:
-        st.warning("Suchmodus oder Abfrage geändert – bitte erneut PubMed abrufen.")
+        st.warning("Suchmodus oder Abfrage geändert – bitte erneut Retrieve from PubMed.")
         return
 
     records = retrieved.records
     indexed = sum(bool(x.fields.get("MH")) for x in records)
     titled = sum(bool(x.title) for x in records)
     metrics = st.columns(4)
-    metrics[0].metric("PubMed-Treffer", f"{retrieved.candidate_count:,}")
-    metrics[1].metric("Abgerufen", f"{len(records):,}")
-    metrics[2].metric("Mit Titel", f"{titled:,}")
-    metrics[3].metric("MeSH-indexiert", f"{indexed:,}")
+    metrics[0].metric("PubMed hits", f"{retrieved.candidate_count:,}")
+    metrics[1].metric("Retrieved", f"{len(records):,}")
+    metrics[2].metric("With title", f"{titled:,}")
+    metrics[3].metric("MeSH-indexed", f"{indexed:,}")
 
     if retrieved.candidate_count != len(records):
         st.warning(
-            f"Nur {len(records):,} von {retrieved.candidate_count:,} Treffern "
-            "analysiert (nach PubMed-Relevanz sortiert). Die Rankings gelten "
-            "nur für die abgerufene Auswahl, nicht für alle Treffer."
+            f"Only {len(records):,} of {retrieved.candidate_count:,} hits were "
+            "analyzed (sorted by PubMed relevance). Rankings apply "
+            "only to the retrieved sample, not to all hits."
         )
     if not records:
-        st.info("Keine Datensätze abgerufen.")
+        st.info("No records retrieved.")
         return
 
-    st.markdown("#### Ranking und Filter")
+    st.markdown("#### Ranking and filters")
     mode = st.radio(
-        "Ranking-Verfahren",
-        ["TF-IDF / Häufigkeit", "Semantic", "Hybrid"],
+        "Ranking method",
+        ["TF-IDF / Frequency", "Semantic", "Hybrid"],
         horizontal=True, key="harvest_ranking_mode",
     )
     options = st.columns(4)
     with options[0]:
         top_n = st.number_input(
-            "Top-N anzeigen", min_value=10, max_value=1000,
+            "Show top N", min_value=10, max_value=1000,
             value=100, step=10, key="harvest_top_n")
     if is_title:
         if not titled:
-            st.error("Keine Titel vorhanden.")
+            st.error("No titles available.")
             return
         with options[1]:
             min_df = st.number_input(
-                "Minimale Titel-Dokumenthäufigkeit", min_value=1,
+                "Minimum title document frequency", min_value=1,
                 max_value=titled, value=min(2, titled),
                 step=1, key="harvest_min_df")
         with options[2]:
             ngram = st.selectbox(
-                "N-Gramme", [1, 2, 3], index=1, key="harvest_ngram",
+                "N-grams", [1, 2, 3], index=1, key="harvest_ngram",
                 format_func=lambda n: (
-                    "Einzelwörter" if n == 1
-                    else f"Einzelwörter bis {n}-Wort-Phrasen"
+                    "Single words" if n == 1
+                    else f"Single words up to {n}-word phrases"
                 ))
         with options[3]:
             remove_query = st.checkbox(
-                "Suchwörter ausblenden", value=True, key="harvest_exclude_query")
+                "Exclude search terms", value=True, key="harvest_exclude_query")
         extra_stopwords = st.text_input(
-            "Zusätzliche englische Stoppwörter (optional)",
+            "Additional English stop words (optional)",
             key="harvest_extra_stop")
         title_args = {
             "min_df": int(min_df), "max_ngram": int(ngram),
@@ -206,15 +206,15 @@ def render() -> None:
         base = title_tfidf(
             records, top_n=MAX_EMBED_CANDIDATES, **title_args)
         st.caption(
-            "TF-IDF: geglättete IDF + L2-normalisierte Dokumentgewichte. "
-            "Die Kandidaten stammen ausschliesslich aus den Titeln; "
-            "Stoppwörter erzeugen keine künstlichen Phrasen."
+            "TF-IDF: smoothed IDF + L2-normalized document weights. "
+            "Candidates come exclusively from titles; "
+            "stop words do not create artificial phrases."
         )
         filters = dict(title_args)
     else:
         with options[1]:
             exclude_checks = st.checkbox(
-                "Allgemeine MeSH-Check-Tags ausblenden",
+                "Exclude general MeSH check tags",
                 value=True, key="harvest_exclude_checktags")
         term_key, score_key, rank_label = (
             "MeSH descriptor", "Indexed records", "Frequency rank"
@@ -224,16 +224,16 @@ def render() -> None:
             exclude_check_tags=bool(exclude_checks))
         filters = {"exclude_check_tags": bool(exclude_checks)}
         st.caption(
-            "Basisranking: Anzahl tatsächlich vergebener MeSH-Descriptors pro "
-            "indexierter Publikation. Keine automatische Thesaurus-Expansion."
+            "Base ranking: number of actually assigned MeSH descriptors per "
+            "indexed publication. No automatic thesaurus expansion."
         )
         if not indexed:
-            st.error("Keine MeSH-indexierten Datensätze im Abruf.")
+            st.error("Keine MeSH-indexeden Datensätze im Abruf.")
         elif indexed < len(records):
             st.warning(
-                f"{len(records) - indexed:,} Publikationen ohne MeSH-Indexierung "
-                "werden nicht als negative Fälle gewertet. Prozente beziehen "
-                "sich auf die {indexed:,} indexierten Publikationen."
+                f"{len(records) - indexed:,} publications without MeSH indexing "
+                "are not counted as negatives. Percentages refer "
+                "to the {indexed:,} indexed publications."
             )
 
     score_weight = 0.6
@@ -241,65 +241,65 @@ def render() -> None:
     diversify = False
     diversity_weight = 0.15
     focus = ""
-    if mode != "TF-IDF / Häufigkeit":
-        st.markdown("#### Semantisches Modell")
+    if mode != "TF-IDF / Frequency":
+        st.markdown("#### Semantic model")
         st.caption(
-            "Originales englischsprachiges all-MiniLM-L6-v2 über die ressourcenschonende "
-            "ONNX-Implementierung FastEmbed. Das Modell wird beim ersten Aufruf "
-            "auf den Streamlit-Server heruntergeladen und lokal ausgeführt. "
-            "Keine Suchbegriffe werden generiert."
+            "Original English all-MiniLM-L6-v2 via the lightweight "
+            "FastEmbed ONNX implementation. On first use, the model is "
+            "downloaded to the Streamlit server and run locally. "
+            "No search terms are generated."
         )
         focus = st.text_input(
-            "Semantisches Zielkonzept (in Englisch)",
+            "Semantic target concept (in English)",
             value=default_semantic_focus(saved_query),
             help="Beispiel: academic self-concept among university students. "
-                 "Für jedes Konstrukt ein spezifisches Zielkonzept formulieren.",
+                 "Use a specific target concept for each construct.",
             key="harvest_semantic_focus",
         )
         tuning = st.columns([2, 2, 2])
         with tuning[0]:
             pool_size = st.slider(
-                "Kandidaten für Embeddings",
+                "Embedding candidates",
                 min_value=100, max_value=MAX_EMBED_CANDIDATES,
                 value=600, step=100, key="harvest_semantic_pool",
-                help="Die Kandidaten werden vorab nach TF-IDF / Häufigkeit begrenzt. "
-                     "Begriffe ausserhalb des Pools können nicht semantisch aufsteigen.",
+                help="Candidates are preselected by TF-IDF / frequency. "
+                     "Terms outside the candidate pool cannot improve through semantic ranking.",
             )
         with tuning[1]:
             if mode == "Hybrid":
                 score_weight = st.slider(
-                    "Semantikgewicht im Hybrid-RRF",
+                    "Semantic weight in hybrid RRF",
                     min_value=0.0, max_value=1.0,
                     value=0.6, step=0.05,
                     key="harvest_semantic_weight",
-                    help="0=rein statistische Rangplätze, 1=rein semantische "
-                         "Rangplätze; k=60 für Reciprocal Rank Fusion.",
+                    help="0 = purely statistical ranks, 1 = purely semantic "
+                         "ranks; k=60 for reciprocal rank fusion.",
                 )
         with tuning[2]:
             diversify = st.checkbox(
-                "Redundanz reduzieren (MMR)", value=False,
+                "Reduce redundancy (MMR)", value=False,
                 key="harvest_diversify",
-                help="Optionaler MMR-Schritt, der sehr ähnliche Vorschläge "
-                     "bei der Ausgabe zurückstuft.",
+                help="Optional MMR step to downrank very similar "
+                     "suggestions in the output.",
             )
         if diversify:
             diversity_weight = st.slider(
-                "Redundanzstrafe", 0.0, 0.45, 0.15, step=0.05,
+                "Redundancy penalty", 0.0, 0.45, 0.15, step=0.05,
                 key="harvest_diversity_weight")
         st.warning(
-            "Semantische Nähe bedeutet nicht begriffliche Gleichwertigkeit: "
-            "Verwandte Konstrukte wie academic self-efficacy und academic "
-            "self-concept müssen fachlich getrennt beurteilt werden."
+            "Semantic similarity does not imply construct equivalence: "
+            "Related constructs such as academic self-efficacy and academic "
+            "self-concept must be evaluated separately."
         )
 
     rows = base.rows[:int(top_n)]
-    if mode != "TF-IDF / Häufigkeit" and base.rows:
+    if mode != "TF-IDF / Frequency" and base.rows:
         try:
             if len(focus.strip()) < 3:
-                st.error("Bitte ein englischsprachiges Zielkonzept eingeben.")
+                st.error("Enter an English target concept.")
                 return
             with st.spinner(
-                "MiniLM-Embeddings berechnen (erstmalig Modelldownload erforderlich)"
+                "Computing MiniLM embeddings (initial model download required)"
             ):
                 rows = _cached_semantic(
                     base.rows[:int(pool_size)], focus.strip(),
@@ -312,46 +312,46 @@ def render() -> None:
                 term_key=term_key,
             )
             st.caption(
-                f"Von den Top {overlap['Top K']} Vorschlägen stammen "
-                f"{overlap['Shared terms']} auch aus den statistischen Top "
+                f"Of the top {overlap['Top K']} suggestions, "
+                f"{overlap['Shared terms']} also appeared in the statistical top "
                 f"{overlap['Top K']}. {len(overlap['New terms'])} "
-                "sind gegenüber diesem Ranking neu hinzugekommen."
+                "are new relative to that ranking."
             )
             if len(base.rows) > int(pool_size):
                 st.caption(
-                    f"Semantisch bewertet: {min(len(base.rows), int(pool_size)):,} "
-                    f"statistisch vorselektierte Kandidaten. Nicht berücksichtigte "
-                    "Begriffe können durch den Semantic-/Hybrid-Score nicht aufsteigen."
+                    f"Semantically scored: {min(len(base.rows), int(pool_size)):,} "
+                    f"statistically preselected candidates. Other "
+                    "terms cannot rise in the semantic/hybrid ranking."
                 )
         except (EmbeddingError, ValueError, RuntimeError) as exc:
-            st.error(f"Semantisches Ranking nicht verfügbar: {exc}")
-            st.info("TF-IDF / Häufigkeit funktioniert weiterhin ohne das Modell.")
+            st.error(f"Semantic ranking unavailable: {exc}")
+            st.info("TF-IDF / Frequency still works without the model.")
             return
 
     seed_records = []
     if is_title:
-        st.markdown("#### Optionale Seed-Paper-Prüfung")
+        st.markdown("#### Optional seed-paper check")
         uploaded = st.file_uploader(
-            "Seed-Papers als RIS hochladen (optional)",
+            "Upload seed papers as RIS (optional)",
             type=["ris"], key="harvest_seed_ris",
-            help="Zählt nur, ob ein vorgeschlagener Begriff in Titel/Abstract "
-                 "bekannter relevanter Studien vorkommt. Dies ist keine "
-                 "PubMed-Retrievalvalidierung und keine Sensitivitätsschätzung.",
+            help="Only counts whether a suggested term occurs in the title/abstract "
+                 "of known relevant papers. This is not a "
+                 "PubMed retrieval validation or sensitivity estimate.",
         )
         if uploaded:
             if uploaded.size > 10 * 1024 * 1024:
-                st.warning("Seed-RIS-Datei zu gross (max. 10 MB).")
+                st.warning("Seed RIS file too large (maximum 10 MB).")
             else:
                 seed_records, seed_encoding = parse_ris(uploaded.getvalue())
                 if seed_records:
                     rows = annotate_seed_presence(rows, seed_records)
                     st.caption(
-                        f"{len(seed_records)} Seed-Papers aus RIS ({seed_encoding}) "
-                        "analysiert: exakte Phrase in Titel oder Abstract, ohne "
-                        "Rückschluss auf die Trefferfähigkeit einer PubMed-Abfrage."
+                        f"{len(seed_records)} seed papers from RIS ({seed_encoding}) "
+                        "analyzed: exact phrase in title or abstract, without "
+                        "inferring PubMed query retrieval performance."
                     )
     if not rows:
-        st.info("Kein Begriff erfüllt die Auswahlkriterien.")
+        st.info("No term meets the selection criteria.")
     columns = _rank_columns(mode, is_title, diversify)
     if seed_records:
         columns += ["Seed records containing term", "% seed records"]
@@ -377,11 +377,11 @@ def render() -> None:
         "statistical_method": base.note,
         "filters": filters,
         "candidate_pool": min(int(pool_size), len(base.rows))
-                          if mode != "TF-IDF / Häufigkeit" else len(base.rows),
-        "model": MODEL_ID if mode != "TF-IDF / Häufigkeit" else None,
+                          if mode != "TF-IDF / Frequency" else len(base.rows),
+        "model": MODEL_ID if mode != "TF-IDF / Frequency" else None,
         "embedding_runtime": "FastEmbed (CPU ONNX)"
-                             if mode != "TF-IDF / Häufigkeit" else None,
-        "focus": focus if mode != "TF-IDF / Häufigkeit" else None,
+                             if mode != "TF-IDF / Frequency" else None,
+        "focus": focus if mode != "TF-IDF / Frequency" else None,
         "hybrid_method": (
             f"weighted RRF with k={RRF_K}, semantic_weight={score_weight}"
             if mode == "Hybrid" else None
@@ -401,7 +401,7 @@ def render() -> None:
     buttons = st.columns(2)
     with buttons[0]:
         st.download_button(
-            "Ranking als CSV", table_csv,
+            "Ranking as CSV", table_csv,
             "searchbridge_harvested_terms.csv", "text/csv",
             use_container_width=True,
         )
@@ -415,14 +415,14 @@ def render() -> None:
             z.writestr("seed_papers.ris", ris_bytes(seed_records))
     with buttons[1]:
         st.download_button(
-            "CSV + Suchprotokoll + RIS (ZIP)", archive.getvalue(),
+            "CSV + search log + RIS (ZIP)", archive.getvalue(),
             "searchbridge_harvesting.zip", "application/zip",
             type="primary", use_container_width=True,
         )
-    with st.expander("Methodik und Suchprotokoll"):
+    with st.expander("Methods and search log"):
         st.json(meta)
     st.info(
-        "Die Ergebnisse sind Kandidaten zur manuellen Prüfung. "
-        "Ein höheres Ranking belegt weder Synonymie noch einen "
-        "zusätzlichen Retrievalgewinn."
+        "The results are candidates for manual review. "
+        "A higher rank does not establish synonymy or "
+        "additional retrieval recall."
     )
