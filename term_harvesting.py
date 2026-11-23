@@ -106,8 +106,8 @@ def title_tfidf(
     IDF = log((N+1)/(df+1))+1; score = sum_d tfidf(d, term) / N.
     These scores describe the SELECTED retrieval sample, not all PubMed records.
     """
-    if min_df < 1 or max_ngram not in (1, 2) or top_n < 1:
-        raise ValueError("min_df >=1, max_ngram in {1,2}, top_n >=1 erforderlich.")
+    if min_df < 1 or max_ngram not in (1, 2, 3) or top_n < 1:
+        raise ValueError("min_df >=1, max_ngram in {1,2,3}, top_n >=1 erforderlich.")
     titles = [r.title for r in records if r.title.strip()]
     n = len(titles)
     if n == 0:
