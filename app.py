@@ -177,6 +177,17 @@ with translate_tab:
                     st.caption(f"API-Endpunkt: {item['endpoint']} · Modus: {item['mode']}")
                 st.code(item["query"], language=None)
                 if name == "OpenAlex" and item.get("request_json"):
+                    if not item.get("proximity_preserved", True):
+                        skipped = [x for x in item.get("removed", [])
+                                   if "nur für dieses Paar breites AND" in x]
+                        st.warning(
+                            f"OpenAlex kann bei {len(skipped)} Nähepaar(en) "
+                            "die Kombination der Ovid-Wildcards nicht als echte "
+                            "Proximity-Abfrage ausführen. Nur diese Paarzweige "
+                            "wurden als breiteres AND übertragen, "
+                            "ohne die Wildcards abzuschneiden. "
+                            "Die konkreten Stellen stehen unten im Verlustbericht."
+                        )
                     if item.get("uses_post"):
                         st.info(
                             "Die vollständige OQL-Strategie ist für einen GET-Link zu lang. "
