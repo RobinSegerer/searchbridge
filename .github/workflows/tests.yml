@@ -16,6 +16,6 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements-ci.txt
       - name: Verify Python syntax
-        run: python -m py_compile app.py translator_core.py ris_proximity.py pubmed_proximity.py term_harvesting.py harvesting_ui.py mesh_expansion.py semantic_ranking.py external_translation.py openalex_oql.py
+        run: python -m py_compile app.py translator_core.py ris_proximity.py pubmed_proximity.py term_harvesting.py harvesting_ui.py mesh_expansion.py semantic_ranking.py external_translation.py openalex_oql.py crossref_translation.py semantic_scholar_translation.py
       - name: Run offline regression tests
         run: python -m unittest discover -v
