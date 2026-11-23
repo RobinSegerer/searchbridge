@@ -681,8 +681,10 @@ def render() -> None:
                            "application/x-research-info-systems",
                            use_container_width=True)
     with c2:
-        st.download_button("Records + AI: CSV", csv_bytes(ordered, ai),
-                           "searchbridge_merged.csv", "text/csv",
+        st.download_button("Screening results: CSV",
+                           _dict_csv([_screening_row(r, ai, human)
+                                      for r in ordered]),
+                           "searchbridge_screening_results.csv", "text/csv",
                            use_container_width=True)
     with c3:
         st.download_button(
@@ -694,6 +696,6 @@ def render() -> None:
     st.info(
         "The ZIP contains the complete deduplicated record list, "
         "source log, deduplication audit, potential duplicate list, "
-        "separate AI suggestions and human decisions. "
+        the full screening results table, AI suggestions, and human decisions. "
         "This does not automatically create a complete PRISMA flowchart."
     )
