@@ -148,7 +148,7 @@ def openalex_search(oql: str, limit: int = 100, *,
         "OpenAlex", records[:limit], total, oql,
         complete=total == len(records),
         warning="" if total == len(records) else
-        f"OpenAlex: {len(records):,} von {total:,} Treffern abgerufen "
+        f"OpenAlex: {len(records):,} of {total:,} hits retrieved "
         "(API-Limit/Pagination)."
     )
 
