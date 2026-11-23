@@ -140,7 +140,7 @@ def render() -> None:
         return
     retrieved, saved_direction, saved_query = st.session_state.harvest_data
     if direction != saved_direction or query.strip() != saved_query:
-        st.warning("Suchmodus oder Abfrage geändert – bitte erneut Retrieve from PubMed.")
+        st.warning("Search mode or query changed – retrieve from PubMed again.")
         return
 
     records = retrieved.records
@@ -228,7 +228,7 @@ def render() -> None:
             "indexed publication. No automatic thesaurus expansion."
         )
         if not indexed:
-            st.error("Keine MeSH-indexeden Datensätze im Abruf.")
+            st.error("No MeSH-indexed records retrieved.")
         elif indexed < len(records):
             st.warning(
                 f"{len(records) - indexed:,} publications without MeSH indexing "
