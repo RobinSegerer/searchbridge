@@ -37,10 +37,6 @@ articles results review reviews systematic method methods evidence findings
 case cases effect effects impact analysis analyses investigation investigations
 """.split())
 # Standard indexing "check tags" are valid terms; users can choose to include.
-MESH_CHECK_TAGS = frozenset("""
-humans animals male female adult aged child adolescent infant newborn young adult
-middle aged aged 80 and over pregnancy pregnant women
-""".split("\n"))  # combined with explicit normalized labels below
 COMMON_CHECK_TAGS = frozenset({
     "humans", "animals", "male", "female", "adult", "aged", "child",
     "adolescent", "infant", "infant, newborn", "young adult", "middle aged",
@@ -122,12 +118,20 @@ def title_tfidf(
     exclude, prefixes = vocabulary_exclusions(query) if remove_query_terms else (set(), ())
     corpora = []
     for title in titles:
-        words = [
-            w for w in word_tokens(title)
-            if len(w) >= 3 and w not in stops
-            and w not in exclude and not any(w.startswith(prefix) for prefix in prefixes)
-        ]
-        corpora.append(Counter(_make_ngrams(words, max_ngram)))
+        # Preserve original title adjacency: never form artificial bigrams
+        # across removed stopwords or excluded query words.
+        words = word_tokens(title)
+        phrases = []
+        for size in range(1, max_ngram + 1):
+            for i in range(len(words) - size + 1):
+                part = words[i:i + size]
+                if all(
+                    len(w) >= 3 and w not in stops and w not in exclude
+                    and not any(w.startswith(prefix) for prefix in prefixes)
+                    for w in part
+                ):
+                    phrases.append(" ".join(part))
+        corpora.append(Counter(phrases))
     df = Counter()
     count = Counter()
     for terms in corpora:
