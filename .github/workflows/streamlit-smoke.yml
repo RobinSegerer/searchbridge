@@ -44,4 +44,33 @@ jobs:
           assert '"Students"[mh]' in outputs["PubMed"]["query"]
           assert outputs["PubMed"]["query"]
           print("PubMed translation tab rendered for full user Ovid search")
+
+          # Seed one realistic deduplicated study and render the full
+          # final human screening card, including complete abstract.
+          from review_core import ReviewRecord, merge_records
+          citation = ReviewRecord(
+              uid="smoke-review-1", title="Social media in university students",
+              abstract="This is the full smoke-test abstract about digital media and students.",
+              source="PubMed", source_id="12345678", doi="10.1234/demo",
+              year="2025",
+          )
+          merged = merge_records([citation])
+          result.session_state["review_data"] = (
+              merged,
+              [{"source": "PubMed", "status": "imported",
+                "total_hits": 1, "retrieved": 1, "complete": True}]
+          )
+          result.session_state["review_dedup_engine"] = "Python DOI/PMID/title+year"
+          result.run(timeout=100)
+          for issue in result.exception:
+              print("SCREENING UI EXCEPTION:", issue.message)
+          assert not result.exception, "Review Pipeline screening card failed"
+          assert any(
+              "full smoke-test abstract" in str(item.value)
+              for item in result.markdown
+          ), "Full abstract is not visible in human review UI"
+          assert result.session_state["review_openai_model"] == "gpt-6.1-terra", (
+              "Default screening model must be GPT-6.1 Terra"
+          )
+          print("Human review full abstract and Terra default verified")
           PY
