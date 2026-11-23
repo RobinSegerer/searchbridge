@@ -16,6 +16,11 @@ from ris_proximity import (
 from pubmed_proximity import (
     PubMedError, parsed_terms, build_pubmed_and_query, fetch_pubmed_candidates,
 )
+from mesh_expansion import (
+    MeSHError, find_exp_headings, expand_mesh_heading, ExplodedHeading,
+    display_rows as mesh_display_rows, csv_export as mesh_csv_export,
+    labels_as_text as mesh_labels_as_text,
+)
 
 st.set_page_config(page_title="SearchBridge", page_icon="🔎", layout="wide")
 st.markdown(
@@ -119,6 +124,12 @@ def display_results(records, rows, clause):
         st.caption(f"Preview limited to 500; exports contain all {len(subset)} records.")
 
 
+@st.cache_data(ttl=24 * 60 * 60, show_spinner=False)
+def cached_mesh_expansion(name: str, qualifier: str):
+    """Fetch official NLM MeSH RDF hierarchy; cache results for 24h."""
+    return expand_mesh_heading(ExplodedHeading(name, qualifier))
+
+
 translate_tab, pubmed_tab, ris_tab, help_tab = st.tabs([
     "Search String Translator", "PubMed Proximity Search",
     "RIS Proximity Checker", "Help",
@@ -138,9 +149,16 @@ with translate_tab:
                 "Elsevier Embase.com": parse_mappings(em_map),
             }
             st.session_state.translations = translate(source, mappings)
+            st.session_state.translated_source = source
+            st.session_state.exp_headings = find_exp_headings(source)
+            st.session_state.mesh_expansions = {}
+            st.session_state.mesh_errors = {}
             st.session_state.translation_error = None
         except (ParseError, ValueError) as ex:
             st.session_state.translations = None
+            st.session_state.exp_headings = []
+            st.session_state.mesh_expansions = {}
+            st.session_state.mesh_errors = {}
             st.session_state.translation_error = str(ex)
     if st.session_state.get("translation_error"):
         st.error(st.session_state.translation_error)
@@ -163,12 +181,103 @@ with translate_tab:
                 if item["removed"]:
                     with st.expander("Removed controlled descriptors"):
                         st.write(item["removed"])
+        st.divider()
+        st.subheader("MeSH EXP: enthaltene untergeordnete Descriptors")
+        st.caption(
+            "Quelle: offizielle NLM-MeSH-RDF-Hierarchie (aktuelle Version). "
+            "Angezeigt werden der Hauptdescriptor und alle engeren Descriptors aus der "
+            "MeSH-Baumstruktur, mit Hierarchiestufe und Tree Number. "
+            "Nicht mit MeSH Entry Terms oder kontrollierten Vokabularen von PsycINFO/Embase gleichsetzen."
+        )
+        exp_headings = st.session_state.get("exp_headings", [])
+        source_current = source == st.session_state.get("translated_source")
+        if not source_current:
+            st.warning("Der eingegebene Suchstring wurde seit der letzten Übersetzung geändert. "
+                       "Bitte erneut Translate ausführen, bevor du die EXP-Hierarchie lädst.")
+        elif not exp_headings:
+            st.info("Keine exp-Descriptors in dieser Ovid-MEDLINE-Strategie gefunden.")
+        else:
+            st.caption(f"{len(exp_headings)} unterschiedliche exp-Descriptors erkannt.")
+            if st.button("Alle MeSH-EXP-Hierarchien laden", key="load_all_mesh", type="secondary"):
+                for h in exp_headings:
+                    identity = (h.name.casefold(), h.qualifier)
+                    if identity not in st.session_state.mesh_expansions:
+                        try:
+                            with st.spinner(f"NLM MeSH: {h.label}"):
+                                st.session_state.mesh_expansions[identity] = cached_mesh_expansion(
+                                    h.name, h.qualifier)
+                        except MeSHError as exc:
+                            st.session_state.mesh_errors[identity] = str(exc)
+            for index, h in enumerate(exp_headings):
+                identity = (h.name.casefold(), h.qualifier)
+                expansion = st.session_state.mesh_expansions.get(identity)
+                label = (f"{h.label} — {expansion.children_count} untergeordnete Descriptors"
+                         if expansion else h.label)
+                with st.expander(label, expanded=expansion is not None):
+                    if expansion is None:
+                        if st.button("MeSH-Unterbegriffe laden", key=f"load_mesh_{index}"):
+                            try:
+                                with st.spinner(f"NLM-MeSH-Abfrage: {h.name}"):
+                                    expansion = cached_mesh_expansion(h.name, h.qualifier)
+                                st.session_state.mesh_expansions[identity] = expansion
+                                st.session_state.mesh_errors.pop(identity, None)
+                            except MeSHError as exc:
+                                st.session_state.mesh_errors[identity] = str(exc)
+                        if identity in st.session_state.mesh_errors:
+                            st.error(st.session_state.mesh_errors[identity])
+                    if expansion is not None:
+                        c_a, c_b, c_c = st.columns(3)
+                        c_a.metric("Untergeordnete Descriptors", expansion.children_count)
+                        c_b.metric("MeSH-Descriptors inkl. Hauptbegriff", expansion.descriptor_count)
+                        c_c.metric("Baumpositionen", len(expansion.positions))
+                        st.caption(
+                            f"MeSH-ID: {expansion.mesh_id} · "
+                            f"MeSH-Root-Tree(s): {', '.join(expansion.root_trees) or 'none'} · "
+                            f"Datenstand abgerufen: {expansion.fetched_utc[:10]}"
+                        )
+                        if h.qualifier:
+                            st.warning("Der Subheading-/Qualifier-Suffix wurde bei der "
+                                       "Hierarchieauflösung nicht angewendet. Qualifier-Vererbung "
+                                       "muss separat überprüft werden.")
+                        if not expansion.root_trees:
+                            st.warning("Dieser Descriptor besitzt keine MeSH-Tree-Number; "
+                                       "es konnten keine engeren Hierarchiepositionen abgeleitet werden.")
+                        st.dataframe(mesh_display_rows(expansion), use_container_width=True,
+                                     hide_index=True, column_config={
+                                         "NLM": st.column_config.LinkColumn(
+                                             "NLM descriptor", display_text="Open"),
+                                         "Level": st.column_config.NumberColumn(
+                                             "Level", help="0 = Ausgangsdescriptor, 1 = direkte Unterkategorie"),
+                                     })
+                        st.caption("Ein Descriptor kann mehrfach in verschiedenen MeSH-Baumzweigen vorkommen. "
+                                   "Der Descriptor-Zähler ist nach MeSH-ID dedupliziert; "
+                                   "die Tabelle enthält sämtliche Hierarchiepositionen.")
+                        c_csv, c_txt = st.columns(2)
+                        with c_csv:
+                            st.download_button(
+                                "Alle Tree-Positionen als CSV",
+                                mesh_csv_export(expansion),
+                                f"mesh_exp_{expansion.mesh_id}.csv",
+                                "text/csv", key=f"mesh_csv_{index}",
+                                use_container_width=True)
+                        with c_txt:
+                            st.download_button(
+                                "Eindeutige Descriptors als TXT",
+                                mesh_labels_as_text(expansion).encode("utf-8"),
+                                f"mesh_exp_{expansion.mesh_id}.txt",
+                                "text/plain", key=f"mesh_txt_{index}",
+                                use_container_width=True)
         data = io.BytesIO()
         with zipfile.ZipFile(data, "w", compression=zipfile.ZIP_DEFLATED) as z:
             for name, entry in results.items():
                 z.writestr(name.replace(" ", "_") + ".txt", entry["query"])
             z.writestr("quality_report.json", json.dumps(results, indent=2,
                                                         ensure_ascii=False))
+            if source_current:
+                for expansion in st.session_state.get("mesh_expansions", {}).values():
+                    z.writestr(f"MeSH_EXP_{expansion.mesh_id}.csv", mesh_csv_export(expansion))
+                    z.writestr(f"MeSH_EXP_{expansion.mesh_id}_unique_terms.txt",
+                               mesh_labels_as_text(expansion))
         st.download_button("Download translated queries + quality report",
                            data.getvalue(), "searchbridge_translations.zip",
                            "application/zip")
@@ -297,6 +406,12 @@ with help_tab:
     ### How it works
     - The translator rewrites supported Ovid operators and field codes.
       Unverified MeSH-to-Emtree mappings are not invented.
+    - In the translator's **MeSH EXP** section, click *Alle MeSH-EXP-Hierarchien laden*
+      or resolve one exp descriptor at a time. The NLM RDF API provides
+      the source MeSH root and all narrower descriptors, levels and tree positions.
+      This is the **MeSH** hierarchy only, not a PsycINFO or Emtree explosion.
+      If NLM is unavailable or an exact descriptor cannot be resolved, the
+      app displays an error instead of guessing.
     - PubMed mode runs a broad Boolean AND query through E-utilities and
       post-filters retrieved title, abstract and author keyword fields.
     - RIS mode evaluates selected adjN clauses on exported bibliographic records.
