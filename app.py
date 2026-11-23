@@ -40,7 +40,7 @@ st.markdown(
 st.markdown(
     '<div class="hero"><h1>SearchBridge</h1>'
     '<p>Ovid search translation · PubMed and RIS proximity verification</p>'
-    '<p>Rule-based · No LLMs · No mandatory API keys</p></div>',
+    '<p>Rule-based by default · Optional OpenAI screening · Some data sources require API keys</p></div>',
     unsafe_allow_html=True,
 )
 SAMPLE = """(
