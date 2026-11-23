@@ -65,7 +65,7 @@ def pubmed_search(query: str, limit: int, *, email: str = "",
         "PubMed", records, r.candidate_count, query,
         complete=r.candidate_count == len(records),
         warning="" if len(records) == r.candidate_count else
-        "Nur ein Teil der PubMed-Treffer wurde abgerufen."
+        "Only a subset of PubMed hits was retrieved."
     )
 
 
@@ -74,15 +74,15 @@ def openalex_search(oql: str, limit: int = 100, *,
                     progress: Callable[[int, int], None] | None = None) -> SourceResult:
     if not oql.strip().casefold().startswith("get works"):
         raise ValueError(
-            "OpenAlex verlangt OQL beginnend mit 'get works'. "
-            "Im Search String Translator kann die korrekte OQL-Suche erzeugt werden."
+            "OpenAlex requires OQL beginning with 'get works'. "
+            "The Search String Translator can generate a valid OQL query."
         )
     if not 1 <= limit <= 2000:
-        raise ValueError("OpenAlex Abfrage-Limit: 1–2'000 Publikationen.")
+        raise ValueError("OpenAlex query limit: 1–2,000 publications.")
     if not api_key and limit > 100:
         raise ValueError(
-            "OpenAlex verlangt für die Pagination über die erste Seite "
-            "einen eigenen API-Key. Bitte Limit ≤ 100 oder Key verwenden."
+            "OpenAlex requires an API key to paginate beyond the first page; "
+            "use a limit of 100 or fewer, or supply a key."
         )
     session = _http()
     headers = {"Content-Type": "application/json",
@@ -120,13 +120,13 @@ def openalex_search(oql: str, limit: int = 100, *,
                     diagnostic = ""
             if records:
                 raise RetrievalError(
-                    f"OpenAlex wurde nach {len(records)} Datensätzen unterbrochen "
-                    f"(HTTP {status}). Dieser Teilabruf wurde NICHT als "
-                    "vollständige Suche übernommen. " + diagnostic[:400]
+                    f"OpenAlex was interrupted after {len(records)} records "
+                    f"(HTTP {status}). This partial retrieval was NOT counted as "
+                    "a complete search. " + diagnostic[:400]
                 ) from exc
             raise RetrievalError(
                 f"OpenAlex HTTP {status}: {diagnostic[:400] or type(exc).__name__}. "
-                "OQL, API-Key und Rate-/Budget-Limits prüfen."
+                "Check OQL, API key, and rate/budget limits."
             ) from exc
         if page == 1:
             metadata = data.get("meta") or {}
@@ -157,9 +157,9 @@ def scopus_search(query: str, limit: int = 200, *, api_key: str,
                   inst_token: str = "",
                   progress: Callable[[int, int], None] | None = None) -> SourceResult:
     if not api_key.strip():
-        raise ValueError("Scopus Search API erfordert einen Elsevier API-Key.")
+        raise ValueError("Scopus Search API requires an Elsevier API key.")
     if not 1 <= limit <= 2000:
-        raise ValueError("Scopus-Limit: 1–2'000 Datensätze.")
+        raise ValueError("Scopus limit: 1–2,000 records.")
     headers = {
         "X-ELS-APIKey": api_key.strip(),
         "Accept": "application/json",
@@ -188,9 +188,9 @@ def scopus_search(query: str, limit: int = 200, *, api_key: str,
         except (requests.RequestException, ValueError) as exc:
             status = getattr(getattr(exc, "response", None), "status_code", "?")
             raise RetrievalError(
-                f"Scopus API HTTP {status}: Suche/Entitlements, "
-                "Institutionszugriff oder API-Limits prüfen. "
-                "Kein Teilabruf als vollständig ausgewiesen."
+                f"Scopus API HTTP {status}: check query/entitlements, "
+                "institutional access and API limits. "
+                "Partial retrieval is not marked complete."
             ) from exc
         response = payload.get("search-results") or {}
         if offset == 0:
@@ -200,7 +200,7 @@ def scopus_search(query: str, limit: int = 200, *, api_key: str,
                 total = 0
         block = response.get("entry") or []
         if not isinstance(block, list):
-            raise RetrievalError("Scopus lieferte kein standardisiertes Entry-Array.")
+            raise RetrievalError("Scopus returned no valid entry array.")
         entries.extend(block)
         if progress:
             progress(len(entries), min(limit, total) if total else limit)
@@ -213,8 +213,8 @@ def scopus_search(query: str, limit: int = 200, *, api_key: str,
     return SourceResult(
         "Scopus", records, total, query, complete=total == len(records),
         warning=(
-            "Scopus STANDARD enthält möglicherweise keine Abstracts; "
-            "Title/Abstract-Screening kann daher nur eingeschränkt erfolgen. "
-            "Es gelten die institutionellen API-Lizenzbedingungen."
+            "Scopus STANDARD may omit abstracts; "
+            "title/abstract screening may therefore be limited. "
+            "Institutional API licence terms apply."
         )
     )
