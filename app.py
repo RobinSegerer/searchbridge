@@ -269,7 +269,7 @@ with translate_tab:
                             "branches alone were translated as "
                             "broader AND conditions, "
                             "without truncating wildcard terms. "
-                            "Die konkreten Stellen are listed in the loss report below."
+                            "The affected clauses are listed in the loss report below."
                         )
                     if item.get("uses_post"):
                         st.info(
