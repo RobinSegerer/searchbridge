@@ -86,6 +86,8 @@ def render() -> None:
 
     st.markdown("#### 1 · Datenquellen auswählen und abfragen")
     translations = st.session_state.get("translations") or {}
+    initial_pubmed = (translations.get("PubMed") or {}).get(
+        "query", '("social media"[tiab] AND student*[tiab])')
     initial_oa = (translations.get("OpenAlex") or {}).get(
         "query", 'get works about "academic self concept"')
     initial_scopus = (translations.get("Scopus") or {}).get("query", "")
@@ -100,8 +102,10 @@ def render() -> None:
             use_scopus = st.checkbox("Scopus Search API", value=False)
         pubmed_q = st.text_area(
             "PubMed-Suchanfrage (PubMed-Syntax)",
-            '("social media"[tiab] AND student*[tiab])',
-            height=78, help="Nicht Ovid Syntax: PubMed [tiab], [mh] usw.")
+            initial_pubmed,
+            height=78, help=("Nicht Ovid Syntax: PubMed [tiab], [mh] usw. "
+                              "Eine zuvor im Translator erzeugte PubMed-Abfrage "
+                              "wird hier automatisch vorausgefüllt."))
         openalex_q = st.text_area(
             "OpenAlex OQL (kann aus Search String Translator übernommen werden)",
             initial_oa, height=110)
