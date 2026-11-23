@@ -147,6 +147,7 @@ def render() -> None:
         "Verfahren für die Zusammenführung",
         ["Konservative Python-Regeln (DOI/PMID/Titel+Jahr)",
          "ASySD (offizielles R-Paket)"],
+        index=1 if asysd_available() else 0,
         horizontal=True,
         key="review_dedup_method",
     )
