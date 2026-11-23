@@ -20,9 +20,9 @@ class OpenAlexOQLTests(unittest.TestCase):
     def test_adj3_wildcard_and_exact_phrase(self):
         q='(("social media" OR web*) adj3 (platform* OR wom?n)).ti,ab.'
         out=translate_openalex_oql(q)
-        self.assertEqual(out["query"].count("within 2 words of each other"), 4)
+        self.assertEqual(out["query"].count("within 2 words of each other"), 2)
         self.assertIn('("social media" and "platform*" within 2 words of each other)',out["query"])
-        self.assertIn('("web*" and "wom?n" within 2 words of each other)',out["query"])
+        self.assertIn('("web*" AND "wom?n")',out["query"])
         self.assertIn("title-abstract has",out["query"])
 
     def test_flatten_long_or_chain(self):
@@ -35,9 +35,9 @@ class OpenAlexOQLTests(unittest.TestCase):
     def test_openalex_two_wildcard_minimum_prefix_rule(self):
         q = '((Web* OR social) adj3 (platform* OR network*)).ti,ab,kf.'
         out = translate_openalex_oql(q)
-        self.assertEqual(out["query"].count("within 2 words of each other"), 4)
-        self.assertIn('("Web" and "platform*" within 2 words of each other)', out["query"])
-        self.assertTrue(any("Web*" in loss and "enger" in loss for loss in out["removed"]))
+        self.assertEqual(out["query"].count("within 2 words of each other"), 2)
+        self.assertIn('("Web*" AND "platform*")', out["query"])
+        self.assertTrue(any("Web*" in loss and "breites AND" in loss for loss in out["removed"]))
         self.assertFalse(out["validated_equivalence"])
 
     def test_heading_kept_as_unverified_freetext(self):
@@ -72,7 +72,9 @@ And
         out=translate_openalex_oql(q)
         self.assertIn("get works where title-abstract-keywords has",out["query"])
         self.assertEqual(out["query"].count("within 1 words of each other"),8+8+96)
-        self.assertEqual(out["query"].count("within 2 words of each other"),36)
+        self.assertEqual(out["query"].count("within 2 words of each other"),33)
+        self.assertEqual(out["query"].count('"Web*" AND '),3)
+        self.assertFalse(out["proximity_preserved"])
         self.assertTrue(out["uses_post"])
         self.assertIn('"wom?n"',out["query"])
         self.assertEqual(len(out["unverified"]),15)
