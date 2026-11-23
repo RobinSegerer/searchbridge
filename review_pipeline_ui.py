@@ -26,7 +26,7 @@ from review_retrieval import (
     RetrievalError, pubmed_search, openalex_search, scopus_search,
 )
 from openai_review_screening import screen_batch, DEFAULT_MODEL, SCREENING_MODELS
-from asysd_bridge import asysd_csv, asysd_available, run_asysd, ASySDError, BRIDGE_SCRIPT
+
 
 
 def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
@@ -142,22 +142,13 @@ def render() -> None:
              "klicke anschliessend auf den Abruf-Button."
     )
 
-    st.markdown("##### Deduplikationsverfahren")
-    dedup_method = st.radio(
-        "Verfahren für die Zusammenführung",
-        ["Konservative Python-Regeln (DOI/PMID/Titel+Jahr)",
-         "ASySD (offizielles R-Paket)"],
-        index=1 if asysd_available() else 0,
-        horizontal=True,
-        key="review_dedup_method",
+    st.caption(
+        "Deduplikation: konservative Python-Regeln nach DOI, PMID und "
+        "normalisiertem Titel/Jahr. Ähnliche Titel werden zur manuellen "
+        "Prüfung markiert, nicht automatisch entfernt. "
+        "ASySD wird hier nicht angeboten, solange die R-Integration "
+        "nicht vollständig funktionsgeprüft ist."
     )
-    if not asysd_available():
-        st.caption(
-            "ASySD benötigt Rscript und das offizielle R-Paket auf dem "
-            "Streamlit-Server. Auf Standard-Community-Cloud-Installationen "
-            "steht es in der Regel nicht zur Verfügung. Nach einem Abruf "
-            "kannst du eine ASySD-Importdatei und das lokale R-Skript herunterladen."
-        )
     if submitted:
         if not (use_pubmed or use_openalex or use_scopus or ris_files):
             st.warning("Wähle mindestens eine API oder lade eine RIS-Datei hoch.")
@@ -165,31 +156,75 @@ def render() -> None:
             raw = []
             audit = []
             failures = []
-            with st.spinner("Datenquellen abfragen und RIS-Dateien lesen"):
-                for enabled, title, query, handler in [
-                    (use_pubmed, "PubMed", pubmed_q,
-                     lambda: pubmed_search(
-                         pubmed_q.strip(), int(per_source_limit),
-                         email=pubmed_email, api_key=pubmed_key)),
-                    (use_openalex, "OpenAlex", openalex_q,
-                     lambda: openalex_search(
-                         openalex_q.strip(), int(per_source_limit),
-                         api_key=openalex_key)),
-                    (use_scopus, "Scopus", scopus_q,
-                     lambda: scopus_search(
-                         scopus_q.strip(), int(per_source_limit),
-                         api_key=scopus_key, inst_token=scopus_token)),
-                ]:
-                    if not enabled:
-                        continue
-                    if not query.strip():
-                        failures.append(f"{title}: Suchanfrage fehlt.")
-                        continue
+            source_jobs = []
+            if use_pubmed:
+                source_jobs.append((
+                    "PubMed", pubmed_q,
+                    lambda callback: pubmed_search(
+                        pubmed_q.strip(), int(per_source_limit),
+                        email=pubmed_email, api_key=pubmed_key,
+                        progress=callback
+                    ),
+                ))
+            if use_openalex:
+                source_jobs.append((
+                    "OpenAlex", openalex_q,
+                    lambda callback: openalex_search(
+                        openalex_q.strip(), int(per_source_limit),
+                        api_key=openalex_key, progress=callback
+                    ),
+                ))
+            if use_scopus:
+                source_jobs.append((
+                    "Scopus", scopus_q,
+                    lambda callback: scopus_search(
+                        scopus_q.strip(), int(per_source_limit),
+                        api_key=scopus_key, inst_token=scopus_token,
+                        progress=callback
+                    ),
+                ))
+            total_jobs = len(source_jobs) + len(ris_files or [])
+            overall = st.progress(
+                0.0, text=f"Start: 0 von {total_jobs} Quellen verarbeitet")
+            current = st.progress(
+                0.0, text="Warte auf erste Datenquelle")
+            steps_text = st.empty()
+            steps_text.caption(
+                "Der Balken zeigt tatsächlich abgerufene Datensätze und "
+                "abgeschlossene Verarbeitungsschritte – keine geschätzte Restzeit."
+            )
+
+            def source_progress(index, source, done, total):
+                completed = min(1.0, done / total) if total else 1.0
+                overall.progress(
+                    min(0.8, 0.8 * (index + completed) / max(1, total_jobs)),
+                    text=f"Quelle {index + 1}/{total_jobs}: {source}"
+                )
+                current.progress(
+                    completed,
+                    text=f"{source}: {done:,} von "
+                         f"{total:,} vorgesehenen Datensätzen"
+                )
+
+            job_index = 0
+            for enabled_source, original_query, load in source_jobs:
+                source_progress(job_index, enabled_source, 0,
+                                int(per_source_limit))
+                if not original_query.strip():
+                    failures.append(f"{enabled_source}: Suchanfrage fehlt.")
+                    audit.append({
+                        "source": enabled_source, "query": original_query,
+                        "status": "failed", "error": "Suchanfrage fehlt",
+                        "complete": False, "retrieved": 0,
+                    })
+                else:
                     try:
-                        result = handler()
+                        result = load(
+                            lambda done, total, ix=job_index, name=enabled_source:
+                            source_progress(ix, name, done, total))
                         raw.extend(result.records)
                         audit.append({
-                            "source": title, "query": query.strip(),
+                            "source": enabled_source, "query": original_query.strip(),
                             "total_hits": result.total,
                             "retrieved": len(result.records),
                             "complete": result.complete,
@@ -197,98 +232,94 @@ def render() -> None:
                             "status": "success",
                         })
                     except (RetrievalError, ValueError) as exc:
-                        failures.append(f"{title}: {exc}")
+                        failures.append(f"{enabled_source}: {exc}")
                         audit.append({
-                            "source": title, "query": query.strip(),
+                            "source": enabled_source,
+                            "query": original_query.strip(),
                             "status": "failed", "error": str(exc),
                             "complete": False, "retrieved": 0,
                         })
-                for upload in ris_files or []:
-                    name = upload.name.rsplit(".", 1)[0][:90]
-                    label = "RIS: " + name
-                    try:
-                        if upload.size > 25 * 1024 * 1024:
-                            raise ValueError("Datei überschreitet 25 MB.")
-                        recs, encoding = parse_ris(upload.getvalue())
-                        converted = from_ris(recs, label)
-                        raw.extend(converted)
-                        audit.append({
-                            "source": label, "query": "RIS import",
-                            "total_hits": len(converted),
-                            "retrieved": len(converted),
-                            "complete": True, "status": "imported",
-                            "encoding": encoding,
-                        })
-                    except (ValueError, UnicodeError) as exc:
-                        failures.append(f"{upload.name}: {exc}")
-            if failures:
-                for err in failures:
-                    st.error(err)
-            if raw:
-                st.session_state.review_raw = raw
+                source_progress(job_index, enabled_source, 1, 1)
+                job_index += 1
+
+            for upload in ris_files or []:
+                name = upload.name.rsplit(".", 1)[0][:90]
+                label = "RIS: " + name
+                source_progress(job_index, label, 0, 1)
                 try:
-                    if dedup_method.startswith("ASySD"):
-                        with st.spinner("Offizielles ASySD-R-Paket wird ausgeführt"):
-                            merged = run_asysd(raw)
-                        engine = "ASySD R dedup_citations"
-                    else:
-                        merged = merge_records(raw)
-                        engine = "Python exact DOI/PMID/title-year + fuzzy suggestions"
-                    audit.append({"source": "DEDUPLICATION", "query": "",
-                                  "status": "completed", "dedup_engine": engine,
-                                  "retrieved": len(merged.records),
-                                  "complete": True})
-                    st.session_state.review_data = (merged, audit)
-                    st.session_state.review_ai = {}
-                    st.session_state.review_human = {}
-                    st.session_state.review_screening_runs = []
-                    st.session_state.review_dedup_engine = engine
-                    st.success(
-                        f"{len(raw):,} Datensätze eingelesen → "
-                        f"{len(merged.records):,} nach Deduplikation ({engine})."
+                    if upload.size > 25 * 1024 * 1024:
+                        raise ValueError("Datei überschreitet 25 MB.")
+                    recs, encoding = parse_ris(upload.getvalue())
+                    converted = from_ris(recs, label)
+                    raw.extend(converted)
+                    audit.append({
+                        "source": label, "query": "RIS import",
+                        "total_hits": len(converted),
+                        "retrieved": len(converted),
+                        "complete": True, "status": "imported",
+                        "encoding": encoding,
+                    })
+                except (ValueError, UnicodeError) as exc:
+                    failures.append(f"{upload.name}: {exc}")
+                    audit.append({
+                        "source": label, "query": "RIS import",
+                        "status": "failed", "error": str(exc),
+                        "complete": False, "retrieved": 0,
+                    })
+                source_progress(job_index, label, 1, 1)
+                job_index += 1
+
+            for error in failures:
+                st.error(error)
+
+            if raw:
+                # Progress of the three *actual* dedup phases.
+                phases = {
+                    "Identifier abgleichen": (0.80, 0.91),
+                    "Metadaten zusammenführen": (0.91, 0.97),
+                    "Ähnliche Titel prüfen": (0.97, 1.00),
+                }
+
+                def dedup_progress(phase, done, total):
+                    start, finish = phases.get(phase, (0.80, 1.0))
+                    frac = min(1.0, done / total) if total else 1.0
+                    overall.progress(
+                        start + (finish - start) * frac,
+                        text="Deduplikation: " + phase
                     )
-                except ASySDError as exc:
-                    st.session_state.pop("review_data", None)
-                    st.error("ASySD konnte nicht ausgeführt werden: " + str(exc))
-                    st.info(
-                        "Keine automatische Ersatz-Deduplikation wurde heimlich "
-                        "vorgenommen. Die Originaldatensätze stehen für den "
-                        "Export und den alternativen Python-Lauf zur Verfügung."
+                    current.progress(
+                        frac, text=f"{phase}: {done:,} / {total:,}"
                     )
+
+                merged = merge_records(raw, progress=dedup_progress)
+                engine = "Python DOI/PMID/Titel+Jahr + manuelle Ähnlichkeitskandidaten"
+                audit.append({
+                    "source": "DEDUPLICATION", "query": "",
+                    "status": "completed", "dedup_engine": engine,
+                    "retrieved": len(merged.records),
+                    "complete": True,
+                })
+                st.session_state.review_data = (merged, audit)
+                st.session_state.review_ai = {}
+                st.session_state.review_human = {}
+                st.session_state.review_screening_runs = []
+                st.session_state.review_dedup_engine = engine
+                overall.progress(1.0, text="Abfrage und Deduplikation abgeschlossen")
+                current.empty()
+                steps_text.caption(
+                    f"Abgeschlossen: {len(raw):,} Rohdatensätze, "
+                    f"{len(merged.records):,} eindeutige Datensätze, "
+                    f"{merged.duplicates_removed:,} Dubletten entfernt."
+                )
+                st.success(
+                    f"{len(raw):,} Datensätze eingelesen → "
+                    f"{len(merged.records):,} nach Deduplikation."
+                )
             else:
                 st.session_state.pop("review_data", None)
-                st.session_state.pop("review_raw", None)
+                overall.progress(1.0, text="Abruf beendet – keine Datensätze verfügbar")
+                current.empty()
                 st.error("Keine Datensätze verfügbar; kein Screening möglich.")
-
-    if st.session_state.get("review_raw"):
-        with st.expander("ASySD: Eingabedaten und offizielles R-Skript herunterladen"):
-            st.caption(
-                "Diese Dateien ermöglichen eine echte ASySD-Ausführung in "
-                "einer R-Umgebung. Sie enthalten die Rohdaten vor der "
-                "Python-Deduplikation mit eindeutigen record_id-Werten."
-            )
-            c_asysd = st.columns(2)
-            with c_asysd[0]:
-                st.download_button(
-                    "ASySD-Input (CSV)",
-                    asysd_csv(st.session_state.review_raw),
-                    "searchbridge_asysd_input.csv", "text/csv",
-                    use_container_width=True)
-            with c_asysd[1]:
-                st.download_button(
-                    "ASySD-R-Skript",
-                    BRIDGE_SCRIPT.read_bytes(),
-                    "asysd_bridge.R", "text/plain",
-                    use_container_width=True)
-            st.code(
-                'Rscript asysd_bridge.R searchbridge_asysd_input.csv '
-                'asysd_unique.csv asysd_manual.csv', language="bash"
-            )
-            st.caption(
-                "Voraussetzung: R und das offizielle Paket camaradesuk/ASySD. "
-                "Die extern erstellten ASySD-Ergebnisse werden noch nicht "
-                "automatisch in die laufende Cloud-Sitzung reintegriert."
-            )
 
     if "review_data" not in st.session_state:
         return
@@ -302,6 +333,15 @@ def render() -> None:
     m[1].metric("Eindeutig nach Deduplikation", len(records))
     m[2].metric("Automatisch entfernte Dubletten", merged.duplicates_removed)
     m[3].metric("Unsichere Dublettenpaare (manuell)", len(merged.fuzzy_review))
+    if merged.fuzzy_skipped:
+        st.warning(
+            "Für einige sehr grosse Jahresgruppen wurde die "
+            "quadratische Ähnlichkeitsprüfung aus Performancegründen "
+            "übersprungen: " + ", ".join(
+                f"{year}: {n} Datensätze"
+                for year, n in merged.fuzzy_skipped.items()
+            ) + ". Diese Paare sind nicht automatisch als dublettenfrei bestätigt."
+        )
     st.caption(
         "Verwendet: " + st.session_state.get(
             "review_dedup_engine", "Python DOI/PMID/Titel+Jahr"
