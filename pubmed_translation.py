@@ -20,6 +20,12 @@ PUBMED_URL = "https://pubmed.ncbi.nlm.nih.gov/"
 MAX_BROWSER_URL = 1900
 MAX_EXPLICIT_PAIRS = 800
 _SPELLINGS = {"wom?n": ("woman", "women")}
+# An Ovid prefix shorter than four letters cannot be used as a PubMed wildcard.
+# This *limited* curated candidate set allows the user's Web* strategy to run,
+# but explicitly cannot claim exhaustiveness of every web* word.
+_SHORT_PREFIXES = {
+    "web*": ("web", "website*", "webpage*", "webinar*", "webcam*", "webapp*"),
+}
 _ALLOWED_FIELDS = {"ti", "ab", "kf", "kw", "id", "tw", "mp", "pt"}
 
 
@@ -89,6 +95,15 @@ def _term_variants(raw: str, notes: list[str]) -> list[str]:
             "in PubMed übertragen werden."
         )
     term = re.sub(r"\$(?!\d)", "*", term)
+    if term.casefold() in _SHORT_PREFIXES:
+        values = list(_SHORT_PREFIXES[term.casefold()])
+        notes.append(
+            f"PubMed kann {term!r} nicht trunkieren (weniger als 4 Zeichen "
+            "vor *). Als begrenzte Liste konkreter Web-Begriffe übertragen: "
+            + ", ".join(values) + ". NICHT vollständig äquivalent; "
+            "weitere Varianten müssen bei Bedarf ergänzt werden."
+        )
+        return values
     if term.casefold() in _SPELLINGS:
         values = list(_SPELLINGS[term.casefold()])
         notes.append(
