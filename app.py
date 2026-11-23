@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import streamlit as st
 
 from translator_core import translate, ParseError
+from external_translation import translate_external
 from ris_proximity import (
     ProximityClause, parse_ris, extract_clauses, check_ris_records,
     html_report, csv_bytes, ris_bytes,
@@ -149,7 +150,9 @@ with translate_tab:
                 "Ovid PsycINFO": parse_mappings(psy_map),
                 "Elsevier Embase.com": parse_mappings(em_map),
             }
-            st.session_state.translations = translate(source, mappings)
+            results = translate(source, mappings)
+            results.update(translate_external(source))
+            st.session_state.translations = results
             st.session_state.translated_source = source
             st.session_state.exp_headings = find_exp_headings(source)
             st.session_state.mesh_expansions = {}
@@ -168,15 +171,28 @@ with translate_tab:
         tabs = st.tabs(list(results))
         for tab, (name, item) in zip(tabs, results.items()):
             with tab:
+                if item.get("mode"):
+                    st.warning("Keine validierte 1:1-Übersetzung. Die API-Abfrage verändert die Suchsemantik; bitte alle Hinweise prüfen.")
+                    st.caption(f"API-Endpunkt: {item['endpoint']} · Modus: {item['mode']}")
                 st.code(item["query"], language=None)
+                if item.get("url"):
+                    if name == "OpenAlex":
+                        st.link_button("OpenAlex API-Abfrage öffnen", item["url"])
+                    elif name == "Crossref":
+                        st.link_button("Crossref API-Abfrage öffnen", item["url"])
+                    elif name == "Semantic Scholar":
+                        st.link_button("Semantic Scholar Bulk-API-Abfrage öffnen", item["url"])
                 for note in item["notes"]:
                     if ("PROVISORISCHE" in note or "KEINE Emtree" in note or
                             "kontrollierte Heading-Klausel(n) entfernt" in note):
                         st.warning(note)
                     else:
                         st.caption(note)
+                if item.get("removed") and item.get("mode"):
+                    with st.expander(f"Nicht exakt übertragbare Suchoperationen ({len(item['removed'])})"):
+                        st.write(item["removed"])
                 if item.get("unverified"):
-                    with st.expander(f"Unverified subject headings ({len(item['unverified'])})", expanded=True):
+                    with st.expander(f"Unverified subject headings ({len(item['unverified'])})", expanded=not bool(item.get("mode"))):
                         st.write(item["unverified"])
                         st.caption("Verify descriptors against the target database thesaurus and provide confirmed mappings above.")
                 if item["removed"]:
@@ -209,6 +225,21 @@ with translate_tab:
                                     h.name, h.qualifier)
                         except MeSHError as exc:
                             st.session_state.mesh_errors[identity] = str(exc)
+            if st.session_state.get("mesh_expansions"):
+                st.caption("Optional: zuvor geladene NLM-MeSH-Unterbegriffe können als zusätzliche "
+                           "Freitext-Phrasen in OpenAlex und Semantic Scholar aufgenommen werden. "
+                           "Das ersetzt KEINE MeSH-Indexierung.")
+                if st.button("API-Abfragen mit geladenen MeSH-EXP-Unterbegriffen aktualisieren",
+                             key="apply_exp_to_api"):
+                    variants = {
+                        exp.heading.name.casefold():
+                        [exp.resolved_name] +
+                        list(dict.fromkeys(p.descriptor for p in exp.positions if not p.is_root))
+                        for exp in st.session_state.mesh_expansions.values()
+                    }
+                    st.session_state.translations.update(
+                        translate_external(source, explosions=variants))
+                    st.rerun()
             for index, h in enumerate(exp_headings):
                 identity = (h.name.casefold(), h.qualifier)
                 expansion = st.session_state.mesh_expansions.get(identity)
@@ -272,6 +303,8 @@ with translate_tab:
         with zipfile.ZipFile(data, "w", compression=zipfile.ZIP_DEFLATED) as z:
             for name, entry in results.items():
                 z.writestr(name.replace(" ", "_") + ".txt", entry["query"])
+                if entry.get("url"):
+                    z.writestr(name.replace(" ", "_") + "_api_url.txt", entry["url"])
             z.writestr("quality_report.json", json.dumps(results, indent=2,
                                                         ensure_ascii=False))
             if source_current:
@@ -410,6 +443,15 @@ with help_tab:
     st.markdown("""
     ### How it works
     - The translator rewrites supported Ovid operators and field codes.
+    - The OpenAlex tab renders scoped Boolean queries with documented losses
+      for Ovid ADJ, MeSH headings and field differences. Wildcards use OpenAlex
+      exact search. The API's long-URL limit is checked.
+    - The Semantic Scholar tab uses the Graph /paper/search/bulk endpoint with
+      +(AND), |(OR) and -(NOT), not the relevance search or website syntax.
+    - Crossref returns only a bibliographic relevance query with a prominent
+      warning: the API does NOT support Ovid Boolean operators.
+    - Previously loaded MeSH EXP descendants can optionally be added as
+      labelled free-text candidate phrases for OpenAlex/Semantic Scholar.
       Unverified MeSH-to-Emtree mappings are not invented.
     - In the translator's **MeSH EXP** section, click *Alle MeSH-EXP-Hierarchien laden*
       or resolve one exp descriptor at a time. The NLM RDF API provides
