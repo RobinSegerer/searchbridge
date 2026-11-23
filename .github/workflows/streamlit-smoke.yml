@@ -29,4 +29,19 @@ jobs:
               print("UI EXCEPTION:", issue.message)
           assert not result.exception, "Streamlit initial app render failed"
           print("SearchBridge UI successfully rendered")
+
+          # Exercise the complete user strategy in the actual Streamlit UI.
+          from test_pubmed_translation import FULL
+          result.text_area[0].input(FULL)
+          result.button(key="translate").click()
+          result.run(timeout=100)
+          for issue in result.exception:
+              print("TRANSLATION UI EXCEPTION:", issue.message)
+          assert not result.exception, "Translate interaction failed"
+          outputs = result.session_state["translations"]
+          assert "PubMed" in outputs, "PubMed translation tab missing"
+          assert "PubMed" in outputs["PubMed"]["endpoint"]
+          assert '"Students"[mh]' in outputs["PubMed"]["query"]
+          assert outputs["PubMed"]["query"]
+          print("PubMed translation tab rendered for full user Ovid search")
           PY
