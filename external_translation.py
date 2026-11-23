@@ -21,6 +21,7 @@ import re
 from urllib.parse import urlencode
 
 from translator_core import Node, heading_details, parse_ovid
+from openalex_oql import translate_openalex_oql
 
 BASES = {
     "OpenAlex": "https://api.openalex.org/works",
@@ -237,7 +238,8 @@ def translate_external(
     """Return API endpoint, actual parameter value, URL and loss notes."""
     tree = parse_ovid(source)
     result = {}
-    for target in ("OpenAlex", "Semantic Scholar"):
+    result["OpenAlex"] = translate_openalex_oql(source, explosions=explosions)
+    for target in ("Semantic Scholar",):
         notes: list[str] = []
         lost: list[str] = []
         unverified: list[str] = []
