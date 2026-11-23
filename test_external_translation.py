@@ -71,7 +71,7 @@ class ExternalTranslationTests(unittest.TestCase):
         q = '(juvenil* OR adolescent*) AND (offend* OR delinqu*)'
         cr = translate_external(q)["Crossref"]
         self.assertIn("juvenil", cr["query"])
-        self.assertIn("adolescent", cr["query"])
+        self.assertIn("adolescent", cr["source_terms"])
         self.assertIn("offend", cr["query"])
         self.assertTrue(any("Boolesche" in x for x in cr["removed"]))
         self.assertTrue(any("20%" in x for x in cr["notes"]))
@@ -112,7 +112,9 @@ And
         self.assertTrue(result["OpenAlex"]["request_json"].startswith("{"))
         self.assertFalse(result["OpenAlex"]["proximity_preserved"])
         self.assertTrue(any("breites AND" in x for x in result["OpenAlex"]["removed"]))
-        self.assertGreater(len(result["Crossref"]["query"]), 300)
+        self.assertLess(len(result["Crossref"]["query"]), 150)
+        self.assertEqual(len(result["Crossref"]["anchors"]), 3)
+        self.assertGreater(result["Crossref"]["source_term_count"], 40)
         self.assertIn("student*", result["Semantic Scholar"]["query"])
         self.assertTrue(any("ADJ" in x for x in result["OpenAlex"]["notes"]))
 
