@@ -25,10 +25,20 @@ jobs:
 
           samples = {
             "one proximity": '((College OR university) adj2 (student* OR graduate*)).ti,ab,kf.',
-            "multiple proximity": '(((College OR university) adj2 (student* OR graduate* OR undergraduate* OR postgraduate*)).ti,ab,kf. AND ((Online OR Digital OR social OR Web*) adj3 (Platform* OR network*)).ti,ab,kf.',
+            "multiple proximity": '(((College OR university) adj2 (student* OR graduate* OR undergraduate* OR postgraduate*)).ti,ab,kf. AND ((Online OR Digital OR social OR Web*) adj3 (Platform* OR network*)).ti,ab,kf.)',
             "heading and proximity": '((exp Students/ OR (young adj2 wom?n).ti,ab,kf.) AND (exp "Self Concept"/ OR social.ti,ab,kf.))',
             "large POST": '((young OR juvenile) adj2 (' + " OR ".join("cognitive"+str(i)+"*" for i in range(170)) + ')).ti,ab,kf.',
           }
+          # The full strategy supplied by the user is retained verbatim
+          # in the regression test, so also validate it against OpenAlex.
+          import re
+          with open("test_openalex_oql.py", encoding="utf-8") as handle:
+              tests = handle.read()
+          match = re.search(
+              r'def test_complete_user_strategy\(self\):\s+q="""(.*?)"""',
+              tests, re.S)
+          assert match, "Full user Ovid query not found"
+          samples["complete user query"] = match.group(1)
           for label, search in samples.items():
               item = translate_openalex_oql(search)
               r = requests.post("https://api.openalex.org/query",
