@@ -1,0 +1,49 @@
+name: Live Ovid-to-PubMed translation validation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/pubmed-translation-live.yml
+
+jobs:
+  esearch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install requests
+      - name: Validate generated searches using NCBI ESearch POST
+        run: |
+          python - <<'PY'
+          import requests
+          from pubmed_translation import translate_pubmed
+          from test_pubmed_translation import FULL
+          cases = {
+            "MeSH explode": '(exp Students/ AND "Self Concept"/)',
+            "exact PubMed proximity": '((college OR university) adj2 (student OR graduate)).ti,ab,kf.',
+            "Ovid wildcard proximity": '((college OR university) adj2 (student* OR graduate*)).ti,ab,kf.',
+            "complete user strategy": FULL,
+          }
+          for label, ovid in cases.items():
+              generated = translate_pubmed(ovid)
+              response = requests.post(
+                  "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+                  data={
+                    "db": "pubmed", "retmax": "0",
+                    "retmode": "json", "term": generated["query"],
+                    "tool": "SearchBridge",
+                  }, timeout=60)
+              print("CASE", label, "HTTP", response.status_code,
+                    "chars", len(generated["query"]))
+              print("RESPONSE", response.text[:1200])
+              assert response.ok, f"NCBI rejected {label}"
+              data = response.json()["esearchresult"]
+              assert not data.get("error"), f"{label}: {data['error']}"
+              print("COUNT", data["count"])
+              print("WARNINGS", data.get("warninglist"))
+              print("TRANSLATION", data.get("querytranslation", "")[:300])
+          PY
