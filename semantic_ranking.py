@@ -105,7 +105,7 @@ def rerank_title_terms(
     if top_n < 1:
         raise ValueError("top_n must be positive.")
     if not focus or len(focus.strip()) < 3:
-        raise ValueError("Bitte ein aussagekräftiges semantisches Zielkonzept eingeben.")
+        raise ValueError("Enter a meaningful semantic target concept.")
     if len(tfidf_rows) > MAX_EMBED_CANDIDATES:
         raise ValueError("Too many candidates for a single semantic embedding batch.")
     if not tfidf_rows:
