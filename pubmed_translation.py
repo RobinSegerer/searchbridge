@@ -59,7 +59,7 @@ def _fields(value: str, notes: list[str]) -> tuple[str, ...]:
     raw = [x.strip().lower() for x in value.strip(".").split(",")]
     flags = set(raw)
     if not flags or any(x not in _ALLOWED_FIELDS for x in flags):
-        raise PubMedConversionError(f"Nicht unterstützter Ovid-Feldcode: {value}")
+        raise PubMedConversionError(f"Unsupported Ovid field code: {value}")
     if flags == {"ti", "ab", "kf"} or flags == {"ti", "ab", "kw"}:
         return ("tiab",)
     if flags == {"ti", "ab"}:
@@ -69,17 +69,17 @@ def _fields(value: str, notes: list[str]) -> tuple[str, ...]:
     result = tuple(dict.fromkeys(mapping[x] for x in raw))
     if "mp" in flags or "tw" in flags:
         notes.append(
-            f"Ovid {value} ist NICHT identisch mit PubMed [tw]; "
-            "Umfang der durchsuchten Indexfelder prüfen."
+            f"Ovid {value} is NOT identical to PubMed [tw]; "
+            "check the scope of indexed fields."
         )
     if "id" in flags:
         notes.append(
-            f"Ovid {value}: .id. ist nicht exakt PubMed [ot]; "
-            "hier nur als Keyword-Fallback übertragen."
+            f"Ovid {value}: .id. does not exactly match PubMed [ot]; "
+            "transferred as a keyword fallback only."
         )
     if flags & {"kf", "kw"} and "tiab" not in result:
-        notes.append("Ovid Keyword-Feld als PubMed [ot] übertragen; "
-                     "author-keyword-Verfügbarkeit variiert.")
+        notes.append("Ovid keyword field translated to PubMed [ot]; "
+                     "author-keyword availability varies.")
     return result
 
 
@@ -88,27 +88,27 @@ def _term_variants(raw: str, notes: list[str]) -> list[str]:
     if not term:
         raise PubMedConversionError("Leerer Freitextbegriff.")
     if '"' in term:
-        raise PubMedConversionError("Anführungszeichen innerhalb eines Terms.")
+        raise PubMedConversionError("Quotation marks inside a term.")
     if re.search(r"\$\d+|[#^]", term):
         raise PubMedConversionError(
-            f"Ovid-Spezialtrunkierung {raw!r} kann nicht automatisch sicher "
-            "in PubMed übertragen werden."
+            f"Ovid special truncation {raw!r} cannot be reliably "
+            "translated into PubMed automatically."
         )
     term = re.sub(r"\$(?!\d)", "*", term)
     if term.casefold() in _SHORT_PREFIXES:
         values = list(_SHORT_PREFIXES[term.casefold()])
         notes.append(
-            f"PubMed kann {term!r} nicht trunkieren (weniger als 4 Zeichen "
-            "vor *). Als begrenzte Liste konkreter Web-Begriffe übertragen: "
-            + ", ".join(values) + ". NICHT vollständig äquivalent; "
-            "weitere Varianten müssen bei Bedarf ergänzt werden."
+            f"PubMed cannot truncate {term!r} (fewer than 4 characters "
+            "before *). Expanded to a limited list of specific web terms: "
+            + ", ".join(values) + ". NOT fully equivalent; "
+            "additional variants may need to be added."
         )
         return values
     if term.casefold() in _SPELLINGS:
         values = list(_SPELLINGS[term.casefold()])
         notes.append(
             f"Ovid-Einzelzeichenwildcard {term} explizit als "
-            f"{', '.join(values)} übertragen."
+            f"{', '.join(values)} translated."
         )
         return values
     if "?" in term:
@@ -116,19 +116,19 @@ def _term_variants(raw: str, notes: list[str]) -> list[str]:
             prefix = m.group(1)
             if len(prefix) < 4:
                 raise PubMedConversionError(
-                    f"PubMed unterstützt die Ovid-Einzelzeichenwildcard "
-                    f"{term!r} nicht: mindestens 4 Zeichen vor * notwendig. "
-                    "Bitte Schreibvarianten explizit ergänzen."
+                    f"PubMed does not support the Ovid single-character wildcard "
+                    f"{term!r}: at least 4 characters are required before *. "
+                    "Add spelling variants explicitly."
                 )
             notes.append(
                 f"Ovid ? in {term!r} zu * verbreitert "
-                "(nicht exakt äquivalent)."
+                "(not exactly equivalent)."
             )
             return prefix + "*"
         term = re.sub(r"([A-Za-z]+)\?[A-Za-z]*", repl, term)
         if "?" in term:
             raise PubMedConversionError(
-                f"Nicht übertragbares Ovid-Wildcardmuster {raw!r}."
+                f"Ovid wildcard pattern cannot be translated: {raw!r}."
             )
     if "*" in term:
         # PubMed accepts internal * but requires >= 4 characters before first *.
@@ -136,7 +136,7 @@ def _term_variants(raw: str, notes: list[str]) -> list[str]:
         if len(prefix) < 4:
             raise PubMedConversionError(
                 f"PubMed braucht mindestens vier Zeichen vor dem ersten "
-                f"*: {term!r}. Suchterm manuell präzisieren."
+                f"*: {term!r}. Refine the search term manually."
             )
     return [term]
 
@@ -156,11 +156,11 @@ def _heading(raw: str, notes: list[str]) -> str:
     if qualifier:
         notes.append(
             f"{raw}: MeSH-Subheading /{qualifier} muss gegen die PubMed "
-            "MeSH-Qualifier-Namen geprüft werden; in der generierten Suche "
-            "nicht stillschweigend entfernt."
+            "MeSH qualifier names must be checked; they were "
+            "not silently removed from the generated query."
         )
         raise PubMedConversionError(
-            f"MeSH-Qualifier /{qualifier} aus {raw!r} benötigt ein "
+            f"MeSH qualifier /{qualifier} in {raw!r} requires "
             "verifiziertes Ovid-zu-PubMed-Subheading-Mapping."
         )
     tag = "mh" if exp else "mh:noexp"
@@ -177,8 +177,8 @@ def _render_near(
     if left is None or right is None:
         # Do not flatten complex nested proximity into an unsupported phrase.
         losses.append(
-            f"{node.value}: verschachtelte AND/NOT/Heading-Nähegruppe "
-            "kann PubMed nicht exakt abbilden; breitere AND-Kandidatenabfrage."
+            f"{node.value}: nested AND/NOT/heading proximity group "
+            "cannot be represented exactly in PubMed; using a broader AND candidate query."
         )
         return _join([
             _render(node.left, tags, notes, losses),
@@ -195,10 +195,10 @@ def _render_near(
             or any(" " in x or "-" in x for x in lexis_l + lexis_r)
             or "ot" in tags or "tw" in tags or "pt" in tags):
         losses.append(
-            f"{node.value} ({lexical_pairs} Wortpaare): PubMed-Nähe unterstützt "
-            "hier nicht alle Ovid-Operanden (Trunkierung, Mehrwort-Phrase "
-            "oder nicht unterstütztes Feld). Durch breites AND ersetzt; "
-            "Proximity nach dem Trefferabruf lokal prüfen."
+            f"{node.value} ({lexical_pairs} word pairs): PubMed proximity does not support "
+            "all these Ovid operands (truncation, multiword phrase "
+            "or unsupported field). Replaced with broader AND; "
+            "check proximity locally after retrieving hits."
         )
         return _join([
             _join([_lexical(t, tags, notes) for t in left], "OR"),
@@ -207,8 +207,8 @@ def _render_near(
 
     if lexical_pairs > MAX_EXPLICIT_PAIRS:
         raise PubMedConversionError(
-            f"{node.value}: {lexical_pairs} Nähepaare sind zu viele "
-            "für eine einzelne übersetzte PubMed-Abfrage."
+            f"{node.value}: {lexical_pairs} proximity pairs exceed the limit "
+            "for one translated PubMed query."
         )
     # Ovid ADJ2: up to 1 intervening word, PubMed :~1.
     pairs = [
@@ -218,17 +218,17 @@ def _render_near(
     ]
     if not pairs:
         raise PubMedConversionError(
-            f"Für {node.value} kein unterstütztes PubMed-Proximity-Feld."
+            f"No supported PubMed proximity field for {node.value}."
         )
     notes.append(
         f"{node.value} → PubMed :~{n-1} "
-        f"({lexical_pairs} Wortpaare, Wortreihenfolge beliebig)."
+        f"({lexical_pairs} word pairs, Wortreihenfolge beliebig)."
     )
     if "tiab" in tags:
         notes.append(
-            "PubMed [tiab] umfasst auch Autorenschlagwörter [ot]; "
-            "Feldkombinationen und Proximity-Indexierung nicht in jeder "
-            "Hinsicht identisch mit Ovid .ti,ab,kf."
+            "PubMed [tiab] also includes author keywords [ot]; "
+            "field combinations and proximity indexing do not exactly "
+            "match Ovid .ti,ab,kf. in all respects."
         )
     return _join(pairs, "OR")
 
@@ -259,11 +259,11 @@ def _render(node: Node, tags: tuple[str, ...],
 def translate_pubmed(source: str) -> dict:
     tree = parse_ovid(source)
     notes = [
-        "PubMed [tiab] beinhaltet Titel, Abstract sowie Autorenschlagwörter "
-        "([ot]); nicht vollständig identisch mit Ovid-Indexfeldern.",
-        "MeSH-Headings werden als MeSH [mh] (mit Explosion) bzw. "
-        "[mh:noexp] (ohne Explosion) übertragen. "
-        "Descriptor-Vorzugsbezeichnungen/Indexierungsstand prüfen.",
+        "PubMed [tiab] covers title, abstract, and author keywords "
+        "([ot]); not identical to Ovid indexed fields.",
+        "MeSH headings are translated as MeSH [mh] (exploded) or "
+        "[mh:noexp] (not exploded) translated. "
+        "verify preferred descriptor names and indexing status.",
     ]
     lost: list[str] = []
     query = _render(tree, ("tiab",), notes, lost)
@@ -271,9 +271,9 @@ def translate_pubmed(source: str) -> dict:
     if len(url.encode("utf-8")) > MAX_BROWSER_URL:
         url = ""
         notes.append(
-            "Komplexer Suchstring zu lang für einen zuverlässigen "
-            "PubMed-Browser-Link. Die vollständige Suche als Text kopieren "
-            "oder über NCBI ESearch per POST prüfen; nichts abgeschnitten."
+            "Complex query is too long for a reliable "
+            "PubMed browser link. Copy the complete query as text "
+            "or validate it via NCBI ESearch POST; nothing was truncated."
         )
     return {
         "query": query, "endpoint": "PubMed web / NCBI ESearch (POST for long queries)",
