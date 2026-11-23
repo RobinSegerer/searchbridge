@@ -120,6 +120,20 @@ def pubmed_xml_to_ris(xml: bytes, start_number: int = 1) -> list[RISRecord]:
                 pieces.append(f"{label}: {val}" if label and not val.lower().startswith(label.lower() + ":") else val)
         abstract = " ".join(pieces)
         kws = list(dict.fromkeys(_text(k) for k in el.findall("./MedlineCitation/KeywordList/Keyword") if _text(k)))
+        # Assigned NLM MeSH descriptors (not MeSH entry terms and not author keywords).
+        # Preserve MajorTopicYN separately for optional major-topic counts.
+        mesh_descriptors = []
+        mesh_major = []
+        for mesh_heading in el.findall("./MedlineCitation/MeshHeadingList/MeshHeading"):
+            descriptor = mesh_heading.find("DescriptorName")
+            label = _text(descriptor)
+            if not label:
+                continue
+            if label not in mesh_descriptors:
+                mesh_descriptors.append(label)
+            if descriptor is not None and descriptor.attrib.get("MajorTopicYN") == "Y":
+                if label not in mesh_major:
+                    mesh_major.append(label)
         doi = ""
         for aid in el.findall("./PubmedData/ArticleIdList/ArticleId"):
             if aid.attrib.get("IdType", "").lower() == "doi":
@@ -152,6 +166,10 @@ def pubmed_xml_to_ris(xml: bytes, start_number: int = 1) -> list[RISRecord]:
                 data[tag] = [_ris_value(value)]
         if kws:
             data["KW"] = [_ris_value(k) for k in kws]
+        if mesh_descriptors:
+            data["MH"] = [_ris_value(k) for k in mesh_descriptors]
+        if mesh_major:
+            data["M1"] = [_ris_value(k) for k in mesh_major]
         if authors:
             data["AU"] = [_ris_value(a) for a in authors]
         lines = [f"{tag}  - {v}" for tag, values in data.items() for v in values]
