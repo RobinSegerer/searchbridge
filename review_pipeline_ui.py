@@ -133,7 +133,8 @@ def render() -> None:
             scopus_token = st.text_input(
                 "Scopus Institutions-Token (optional)", type="password")
         submitted = st.form_submit_button(
-            "Datenbanken abfragen und zusammenführen", type="primary")
+            "Datenbanken abfragen und zusammenführen", type="primary",
+            key="review_fetch_and_merge")
     ris_files = st.file_uploader(
         "Weitere Quellen: RIS-Exportdateien (z. B. Web of Science, Ovid, Embase)",
         type=["ris"], accept_multiple_files=True, key="review_ris_files",
