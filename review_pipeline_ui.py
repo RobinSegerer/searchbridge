@@ -696,6 +696,6 @@ def render() -> None:
     st.info(
         "The ZIP contains the complete deduplicated record list, "
         "source log, deduplication audit, potential duplicate list, "
-        the full screening results table, AI suggestions, and human decisions. "
+        "the full screening results table, AI suggestions, and human decisions. "
         "This does not automatically create a complete PRISMA flowchart."
     )
