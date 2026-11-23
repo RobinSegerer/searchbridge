@@ -60,7 +60,7 @@ def _clean_phrase(text: str, notes: list[str]) -> str:
     for m in re.finditer(r"[\w-]+[*?]", term):
         prefix = re.split(r"[*?]", m.group())[0]
         if len(prefix) < 3:
-            notes.append(f"OpenAlex erlaubt Wildcards erst nach mindestens 3 Zeichen: {term!r}")
+            notes.append(f"OpenAlex requires at least 3 characters before a wildcard: {term!r}")
     return term
 
 
@@ -284,6 +284,6 @@ def translate_openalex_oql(
         "validated_equivalence": False,
         "uses_post": not can_get,
         "proximity_preserved": not any(
-            "nur für dieses Paar breites AND" in entry for entry in lost
+            "broad AND for this pair" in entry for entry in lost
         ),
     }
