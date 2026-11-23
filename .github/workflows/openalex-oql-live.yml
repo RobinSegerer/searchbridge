@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - .github/workflows/openalex-oql-live.yml
+      - openalex_oql.py
 
 jobs:
   oql:
