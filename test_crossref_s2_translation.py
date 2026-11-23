@@ -64,7 +64,7 @@ class CrossrefAndSemanticScholarTests(unittest.TestCase):
         AND (social OR online OR digital OR cyber* OR internet).ti,ab,kf."""
         r = translate_semantic_scholar(q)
         self.assertTrue(balanced(r["query"]))
-        self.assertEqual(r["query"].count(" | "), 2 + 1 + 4)
+        self.assertEqual(r["query"].count(" | "), 1 + 1 + 1 + 1 + 4)
         self.assertTrue(r["query"].startswith("(+("))
         self.assertIn("College | university", r["query"])
         self.assertIn("student* | graduate*", r["query"])
