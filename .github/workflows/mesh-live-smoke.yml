@@ -1,0 +1,31 @@
+name: Live NLM MeSH API smoke check
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/mesh-live-smoke.yml
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install requests
+      - name: Verify real MeSH lookup and descendants
+        run: |
+          python - <<'PY'
+          from mesh_expansion import ExplodedHeading, expand_mesh_heading
+          result = expand_mesh_heading(ExplodedHeading("Social Media"))
+          print("NLM descriptor:", result.resolved_name, result.mesh_id)
+          print("Root trees:", result.root_trees)
+          print("Distinct children:", result.children_count)
+          for row in result.positions[:12]:
+              print(row.level, row.descriptor, row.tree_number, row.mesh_id)
+          assert result.mesh_id.startswith("D")
+          assert result.descriptor_count >= 1
+          PY
