@@ -46,21 +46,21 @@ def _flatten(node: Node, operator: str) -> list[Node]:
 def _clean_phrase(text: str, notes: list[str]) -> str:
     term = text.strip().strip('"\'')
     if not term:
-        raise OQLConversionError("Leerer Begriff für OpenAlex OQL.")
+        raise OQLConversionError("Empty term for OpenAlex OQL.")
     if "\\" in term:
-        raise OQLConversionError(f"Backslash in Ovid-Begriff {term!r}: OQL kann diesen nicht übernehmen.")
+        raise OQLConversionError(f"Backslash in Ovid term {term!r}: OQL cannot preserve it.")
     if '"' in term:
-        raise OQLConversionError("Anführungszeichen innerhalb eines Terms müssen manuell geprüft werden.")
+        raise OQLConversionError("Quotation marks inside terms require manual verification.")
     if re.search(r"\$\d+|#", term):
-        notes.append(f"Ovid Spezialtrunkierung {term!r} nicht identisch verfügbar; bitte manuell anpassen.")
+        notes.append(f"Ovid special truncation {term!r} is not supported equivalently; adapt manually.")
         term = re.sub(r"\$\d+", "*", term).replace("#", "?")
     term = term.replace("$", "*")
     if re.search(r"(^|\s)[*?]", term):
-        notes.append(f"OpenAlex unterstützt keine führenden Wildcards: {term!r}")
+        notes.append(f"OpenAlex does not support leading wildcards: {term!r}")
     for m in re.finditer(r"[\w-]+[*?]", term):
         prefix = re.split(r"[*?]", m.group())[0]
         if len(prefix) < 3:
-            notes.append(f"OpenAlex erlaubt Wildcards erst nach mindestens 3 Zeichen: {term!r}")
+            notes.append(f"OpenAlex requires at least 3 characters before a wildcard: {term!r}")
     return term
 
 
@@ -120,19 +120,19 @@ def _render(
         name, exploded, qualifier = heading_details(node.value)
         unverified.append(node.value)
         notes.append(
-            f"{node.value}: MeSH-Descriptor nur als Titel-/Abstract-/Keyword-Freitext "
-            "übertragen; keine indexierte MeSH-Suche."
+            f"{node.value}: MeSH descriptor translated as title/abstract/keyword free text only "
+            "; not an indexed MeSH search."
         )
         if qualifier:
-            lost.append(f"Qualifier {qualifier!r} an {name!r} nicht übertragbar.")
+            lost.append(f"Qualifier {qualifier!r} for {name!r} cannot be translated.")
         labels = [name]
         if exploded and explosions:
             more = explosions.get(name.casefold(), [])
             if more:
                 labels.extend(x for x in more if x.casefold() != name.casefold())
                 notes.append(
-                    f"exp {name}/: {len(labels)-1} untergeordnete MeSH-Labels "
-                    "zusätzlich als FREITEXT, nicht als echte MeSH-Explosion."
+                    f"exp {name}/: {len(labels)-1} narrower MeSH labels "
+                    "included as FREE TEXT only, not true MeSH explosion."
                 )
         labels = list(dict.fromkeys(labels))
         if len(labels) == 1:
@@ -149,14 +149,14 @@ def _render(
         a, b = _or_alternatives(node.left), _or_alternatives(node.right)
         if a is None or b is None:
             raise OQLConversionError(
-                f"{node.value}: komplexe verschachtelte Proximity-Operanden. "
-                "Bitte die Adjazenzklausel zuerst in reine OR-Wortgruppen umformen; "
-                "SearchBridge entfernt die Nähebedingung hier nicht stillschweigend."
+                f"{node.value}: complex nested proximity operands. "
+                "First rewrite the adjacency clause into pure OR term groups; "
+                "SearchBridge does not silently drop proximity constraints."
             )
         if len(a) * len(b) > MAX_PROX_PAIRS:
             raise OQLConversionError(
-                f"{node.value}: {len(a)*len(b)} Proximity-Paare überschreiten "
-                f"das Sicherheitslimit von {MAX_PROX_PAIRS}. Suche aufteilen."
+                f"{node.value}: {len(a)*len(b)} proximity pairs exceed "
+                f"the safety limit of {MAX_PROX_PAIRS}. Split the query."
             )
         # OQL insists all proximity operands share quoted/unquoted mode. Use
         # quoted (= exact/no stemming) consistently, retaining internal * and ?.
@@ -170,21 +170,21 @@ def _render(
                 else:
                     pairs.append(f"({x} AND {y})")
                     lost.append(
-                        f"{node.value} für Paar {left!r} / {right!r}: "
-                        "OpenAlex-Wildcard-Regeln verhindern native Proximity; "
-                        "nur für dieses Paar breites AND (OHNE Wortnähe). "
-                        "Die ursprüngliche Wildcard bleibt erhalten und "
-                        "die Recherche wird für diesen Paarzweig weiter."
+                        f"{node.value} for pair {left!r} / {right!r}: "
+                        "OpenAlex wildcard rules prevent native proximity; "
+                        "broad AND for this pair (NO proximity). "
+                        "The original wildcard is preserved and "
+                        "retrieval is broader for this pair."
                     )
         notes.append(
-            f"{node.value} → native OpenAlex-Nähe mit höchstens {n-1} "
-            "dazwischenliegenden Wörtern; OR-Wortgruppen vollständig "
-            f"auf {len(pairs)} Paarabfragen verteilt."
+            f"{node.value} → native OpenAlex proximity with at most {n-1} "
+            "intervening words; OR term groups fully distributed "
+            f"across {len(pairs)} pair queries."
         )
         notes.append(
-            "OpenAlex verlangt in Proximity-Ausdrücken einheitliche Quotierung "
-            "aller Operanden. Hier sind die Begriffe exakt (kein zusätzliches Stemming), "
-            "Wildcards bleiben erhalten."
+            "OpenAlex requires consistent quoting "
+            "of all proximity operands. Terms are exact (no additional stemming), "
+            "and wildcards are preserved."
         )
         return _join(pairs, "OR", depth)
     if node.kind == "bool":
@@ -199,7 +199,7 @@ def _render(
             left = _render(node.left, notes, lost, unverified, explosions, depth+1)
             right = _render(node.right, notes, lost, unverified, explosions, depth+1)
             return f"({left} NOT {right})"
-    raise OQLConversionError("Nicht unterstützter Ovid-AST-Knoten: " + node.kind)
+    raise OQLConversionError("Unsupported Ovid AST node: " + node.kind)
 
 
 def _join(parts: list[str], operator: str, depth: int) -> str:
@@ -230,11 +230,11 @@ def _scope(tree: Node, notes: list[str], lost: list[str]) -> str:
             mapped.add("title-abstract")
         else:
             mapped.add("title-abstract-keywords")
-            lost.append(f"Unvollständig abbildbare Ovid-Feldcodes {sorted(f)}.")
+            lost.append(f"Ovid field codes without exact mappings: {sorted(f)}.")
     if len(mapped) != 1:
         notes.append(
-            "Unterschiedliche Suchfeldgrenzen werden auf einen gemeinsamen "
-            "OpenAlex-Textbereich verbreitert."
+            "Different field boundaries are broadened to a common "
+            "OpenAlex text scope."
         )
         return "title-abstract-keywords"
     return next(iter(mapped)) if mapped else "title-abstract-keywords"
@@ -257,18 +257,18 @@ def translate_openalex_oql(
     if not can_get:
         uri = ""
         notes.append(
-            "OQL-Abfrage überschreitet die GET-Grenze. Die vollständige "
-            "Suche über POST https://api.openalex.org/ mit JSON-Body ausführen. "
-            "Keine Suchterme wurden abgeschnitten."
+            "OQL query exceeds the GET limit. Execute the complete "
+            "query using POST https://api.openalex.org/ with a JSON body. "
+            "No terms were truncated."
         )
     if scope == "title-abstract-keywords":
         notes.append(
-            "OpenAlex Keywords und Ovid kf sind nicht identisch; OpenAlex verwendet "
-            "algorithmisch erschlossene Keywords. MeSH-/Indexing-Semantik geht verloren."
+            "OpenAlex keywords are not identical to Ovid kf; OpenAlex uses "
+            "algorithmically derived keywords. MeSH/indexing semantics are lost."
         )
     notes.append(
-        "Native OpenAlex OQL – syntaktische Validierung über OpenAlex "
-        "/query erforderlich; nicht als validierte Ovid-MEDLINE-Äquivalenz behandeln."
+        "Native OpenAlex OQL – syntax validation using OpenAlex "
+        "/query is required; do not treat as validated Ovid MEDLINE equivalence."
     )
     body = {"oql": q}
     return {
@@ -284,6 +284,6 @@ def translate_openalex_oql(
         "validated_equivalence": False,
         "uses_post": not can_get,
         "proximity_preserved": not any(
-            "nur für dieses Paar breites AND" in entry for entry in lost
+            "broad AND for this pair" in entry for entry in lost
         ),
     }

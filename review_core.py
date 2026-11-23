@@ -212,7 +212,7 @@ def merge_records(
         component_dois[b].clear()
         reason[i, j] = why
 
-    report("Identifier abgleichen", 0, len(data))
+    report("Matching identifiers", 0, len(data))
     for i, r in enumerate(data):
         if r.doi:
             if r.doi in doi_to_idx:
@@ -231,14 +231,14 @@ def merge_records(
                 union(title_to_idx[k], i, "normalized title + year")
             else:
                 title_to_idx[k] = i
-        report("Identifier abgleichen", i + 1, len(data))
+        report("Matching identifiers", i + 1, len(data))
 
     groups: dict[int, list[ReviewRecord]] = defaultdict(list)
     for i, item in enumerate(data):
         groups[root(i)].append(item)
     merged: list[ReviewRecord] = []
     audit: list[dict] = []
-    report("Metadaten zusammenführen", 0, len(groups))
+    report("Merging metadata", 0, len(groups))
     for group_index, group in enumerate(groups.values(), 1):
         # Longest abstract and most complete metadata survive, independent
         # of the order in which sources were fetched.
@@ -273,7 +273,7 @@ def merge_records(
                     "persistent DOI conflicts block auto-merge"
                 ),
             })
-        report("Metadaten zusammenführen", group_index, len(groups))
+        report("Merging metadata", group_index, len(groups))
     merged.sort(key=lambda r: (norm_title(r.title), r.uid))
 
     fuzzy: list[dict] = []
@@ -284,11 +284,11 @@ def merge_records(
         if item.year and item.title:
             year_groups[item.year].append(item)
     skipped: dict[str, int] = {}
-    report("Ähnliche Titel prüfen", 0, len(year_groups))
+    report("Checking similar titles", 0, len(year_groups))
     for year_index, (year, options) in enumerate(year_groups.items(), 1):
         if len(options) > 250:
             skipped[year] = len(options)
-            report("Ähnliche Titel prüfen", year_index, len(year_groups))
+            report("Checking similar titles", year_index, len(year_groups))
             continue  # Avoid hidden quadratic work on very large year groups.
         normalized = {r.uid: norm_title(r.title) for r in options}
         for i, a in enumerate(options):
@@ -310,7 +310,7 @@ def merge_records(
                         break
             if len(fuzzy) >= fuzzy_limit:
                 break
-        report("Ähnliche Titel prüfen", year_index, len(year_groups))
+        report("Checking similar titles", year_index, len(year_groups))
         if len(fuzzy) >= fuzzy_limit:
             # The manual-candidate list is capped, so do not imply that
             # every possible similar-title pair was tested.

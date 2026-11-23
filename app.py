@@ -68,10 +68,10 @@ def parse_mappings(raw):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         if "=" not in line:
-            raise ValueError(f"Ungültige Mapping-Zeile: {line}")
+            raise ValueError(f"Invalid mapping line: {line}")
         source, target = line.split("=", 1)
         if not source.strip() or not target.strip():
-            raise ValueError(f"Leerer Mapping-Eintrag: {line}")
+            raise ValueError(f"Empty mapping entry: {line}")
         result[source.strip()] = target.strip()
     return result
 
@@ -177,39 +177,39 @@ with translate_tab:
         for tab, (name, item) in zip(tabs, results.items()):
             with tab:
                 if item.get("mode"):
-                    st.warning("Keine validierte 1:1-Übersetzung. Die API-Abfrage verändert die Suchsemantik; bitte alle Hinweise prüfen.")
-                    st.caption(f"API-Endpunkt: {item['endpoint']} · Modus: {item['mode']}")
+                    st.warning("This is not a validated one-to-one translation. The API query changes search semantics; review all warnings.")
+                    st.caption(f"API endpoint: {item['endpoint']} · Mode: {item['mode']}")
                 st.code(item["query"], language=None)
                 if name == "PubMed":
                     if not item.get("proximity_preserved", True):
                         st.warning(
-                            "Einige Ovid-adjN-Zweige enthalten Wildcards bzw. "
-                            "nicht unterstützte PubMed-Näheoperanden. "
-                            "Diese Klauseln sind ausdrücklich als "
-                            "breitere AND-Kandidatenabfragen ausgegeben. "
-                            "Die nicht exakt übertragbaren Ausdrücke "
-                            "stehen unten im Verlustbericht."
+                            "Some Ovid adjN branches contain wildcards or "
+                            "unsupported PubMed proximity operands. "
+                            "These clauses are explicitly presented as "
+                            "broader AND candidate queries. "
+                            "Expressions that could not be translated exactly "
+                            "are listed in the loss report below."
                         )
                     if item.get("requires_post"):
                         st.info(
-                            "Für die vollständige PubMed-Abfrage ist der "
-                            "Browser-Link zu lang. Die Suche wurde NICHT "
-                            "abgeschnitten: Sie kann kopiert oder per "
-                            "NCBI ESearch POST geprüft werden."
+                            "For the full PubMed query, the "
+                            "browser link is too long. The query was NOT "
+                            "truncated: it can be copied or validated by "
+                            "NCBI ESearch POST."
                         )
                     with st.expander(
-                        "PubMed-Syntax und Trefferzahl mit NCBI ESearch überprüfen",
+                        "Verify PubMed syntax and hit count with NCBI ESearch",
                         expanded=bool(item.get("requires_post"))
                     ):
                         ncbikey = st.text_input(
-                            "NCBI-API-Key (optional)", type="password",
+                            "NCBI API key (optional)", type="password",
                             key="translated_pubmed_api_key",
                         )
                         ncbi_email = st.text_input(
-                            "NCBI-E-Mail (optional)", key="translated_pubmed_email",
+                            "NCBI email (optional)", key="translated_pubmed_email",
                         )
                         if st.button(
-                            "PubMed-Suche prüfen (ESearch POST)",
+                            "Validate PubMed query (ESearch POST)",
                             key="validate_translated_pubmed"
                         ):
                             params = {
@@ -222,7 +222,7 @@ with translate_tab:
                             if ncbi_email.strip():
                                 params["email"] = ncbi_email.strip()
                             try:
-                                with st.spinner("PubMed ESearch wird abgefragt"):
+                                with st.spinner("Querying PubMed ESearch"):
                                     response = requests.post(
                                         "https://eutils.ncbi.nlm.nih.gov/"
                                         "entrez/eutils/esearch.fcgi",
@@ -236,7 +236,7 @@ with translate_tab:
                                 else:
                                     st.success(
                                         f"PubMed ESearch: "
-                                        f"{int(data.get('count', 0)):,} Treffer."
+                                        f"{int(data.get('count', 0)):,} hits."
                                     )
                                     translated = data.get("querytranslation", "")
                                     if translated:
@@ -249,49 +249,49 @@ with translate_tab:
                                                 f"{label}: {', '.join(values) if isinstance(values, list) else values}"
                                             )
                                     st.caption(
-                                        "ESearch prüft die Suchausführung, "
-                                        "nicht die Retrieval-Äquivalenz "
-                                        "zwischen PubMed und Ovid MEDLINE."
+                                        "ESearch validates query execution, "
+                                        "not retrieval equivalence "
+                                        "between PubMed and Ovid MEDLINE."
                                     )
                             except (requests.RequestException, ValueError) as exc:
                                 st.error(
-                                    f"PubMed Live-Prüfung fehlgeschlagen: "
+                                    f"PubMed live validation failed: "
                                     f"{type(exc).__name__}. "
-                                    "Zugang, Syntax und NCBI-Limits prüfen."
+                                    "Check connectivity, syntax, and NCBI limits."
                                 )
                 if name == "OpenAlex" and item.get("request_json"):
                     if not item.get("proximity_preserved", True):
                         skipped = [x for x in item.get("removed", [])
-                                   if "nur für dieses Paar breites AND" in x]
+                                   if "broad AND for this pair" in x]
                         st.warning(
-                            f"OpenAlex kann bei {len(skipped)} Nähepaar(en) "
-                            "die Kombination der Ovid-Wildcards nicht als echte "
-                            "Proximity-Abfrage ausführen. Nur diese Paarzweige "
-                            "wurden als breiteres AND übertragen, "
-                            "ohne die Wildcards abzuschneiden. "
-                            "Die konkreten Stellen stehen unten im Verlustbericht."
+                            f"OpenAlex cannot use true proximity for {len(skipped)} pair(s) "
+                            "because of the combination of Ovid wildcards. The affected "
+                            "branches alone were translated as "
+                            "broader AND conditions, "
+                            "without truncating wildcard terms. "
+                            "The affected clauses are listed in the loss report below."
                         )
                     if item.get("uses_post"):
                         st.info(
-                            "Die vollständige OQL-Strategie ist für einen GET-Link zu lang. "
-                            "OpenAlex verwendet hierfür POST / mit dem JSON-Body unten. "
-                            "Es wurde kein Suchterm abgeschnitten."
+                            "The full OQL query is too long for a GET link. "
+                            "Use OpenAlex POST / with the JSON body below. "
+                            "No search term was truncated."
                         )
                     else:
-                        st.caption("Die Abfrage kann direkt mit GET ausgeführt werden; "
-                                   "der identische OQL-Ausdruck ist auch als POST-JSON verfügbar.")
-                    with st.expander("OpenAlex POST-Request (JSON) und Syntaxvalidierung",
+                        st.caption("The query can be executed directly with GET; "
+                                   "the identical OQL query is also available as POST JSON.")
+                    with st.expander("OpenAlex POST request (JSON) and syntax validation",
                                      expanded=bool(item.get("uses_post"))):
                         st.code(item["request_json"], language="json")
                         st.download_button(
-                            "Vollständige OpenAlex-POST-Abfrage (JSON) herunterladen",
+                            "Download full OpenAlex POST request (JSON)",
                             item["request_json"].encode("utf-8"),
                             "searchbridge_openalex_oql.json",
                             "application/json", key="download_openalex_oql")
                         if st.button(
-                            "OQL-Syntax mit OpenAlex prüfen (kostenlos)",
+                            "Validate OQL syntax with OpenAlex (free)",
                             key="validate_openalex_oql"):
-                            with st.spinner("OpenAlex OQL-Parser wird aufgerufen"):
+                            with st.spinner("Checking OpenAlex OQL syntax"):
                                 try:
                                     response = requests.post(
                                         "https://api.openalex.org/query",
@@ -300,56 +300,56 @@ with translate_tab:
                                     response.raise_for_status()
                                     validation = response.json().get("validation", {})
                                     if validation.get("valid") is True:
-                                        st.success("OpenAlex bestätigt: OQL ist syntaktisch gültig.")
+                                        st.success("OpenAlex confirms that the OQL syntax is valid.")
                                         st.caption(
-                                            "Syntaxvalidität prüft nicht die Äquivalenz "
-                                            "zu MEDLINE oder den tatsächlichen Retrievalgewinn.")
+                                            "Valid syntax does not establish equivalence "
+                                            "to MEDLINE or additional retrieval recall.")
                                     else:
-                                        st.error("OpenAlex meldet Syntax- oder Validierungsprobleme.")
+                                        st.error("OpenAlex reports syntax or validation problems.")
                                         st.json(validation)
                                 except (requests.RequestException, ValueError) as exc:
-                                    st.error(f"OpenAlex-Syntaxvalidierung nicht verfügbar: {exc}")
+                                    st.error(f"OpenAlex syntax validation unavailable: {exc}")
                 if item.get("url"):
                     if name == "PubMed":
-                        st.link_button("PubMed-Suche öffnen", item["url"])
+                        st.link_button("Open PubMed search", item["url"])
                     elif name == "OpenAlex":
-                        st.link_button("OpenAlex API-Abfrage öffnen", item["url"])
+                        st.link_button("Open OpenAlex API request", item["url"])
                     elif name == "Crossref":
-                        st.link_button("Crossref API-Abfrage öffnen", item["url"])
+                        st.link_button("Open Crossref API request", item["url"])
                     elif name == "Semantic Scholar":
-                        st.link_button("Semantic Scholar Bulk-API-Abfrage öffnen", item["url"])
+                        st.link_button("Open Semantic Scholar Bulk API request", item["url"])
                 if name == "Crossref" and item.get("anchors"):
                     st.warning(
-                        "Crossref hat keine Boolesche Abfragesprache. Diese "
-                        "Suchanker sind explorative Metadaten-Suchen und keine "
-                        "äquivalente Übersetzung deiner Strategie."
+                        "Crossref has no Boolean query language. These "
+                        "discovery probes are exploratory metadata searches, not "
+                        "equivalent translations of your strategy."
                     )
                     with st.expander(
-                        "Crossref-Suchanker je Themenblock und vollständige "
-                        "Begriffsliste", expanded=True):
+                        "Crossref search anchors by topic block and full "
+                        "term inventory", expanded=True):
                         for anchor in item["anchors"]:
                             st.markdown(
-                                f"**Themenblock {anchor['block']}:** "
+                                f"**Topic block {anchor['block']}:** "
                                 f"`{anchor['query']}`"
                             )
                             st.link_button(
-                                f"Crossref: Block {anchor['block']} durchsuchen",
+                                f"Crossref: Search block {anchor['block']}",
                                 anchor["url"])
                         st.caption(
-                            f"Quellstrategie: {item.get('source_term_count', 0)} "
-                            "unterschiedliche positive Begriffskandidaten; "
-                            "die Reihenfolge und die erste Nähepaarung bestimmen "
-                            "die automatisch gewählten Anker. Bitte fachlich prüfen."
+                            f"Source strategy: {item.get('source_term_count', 0)} "
+                            "distinct positive term candidates; "
+                            "their order and first proximity pair determine "
+                            "the automatically selected anchors. Please verify them."
                         )
                         st.write(item.get("source_terms", []))
                         if item.get("excluded_not_terms"):
                             st.warning(
-                                "Ausgeschlossene NOT-Begriffe können nicht "
-                                "durch Crossref ausgeschlossen werden."
+                                "Excluded NOT terms cannot be "
+                                "excluded in Crossref."
                             )
                             st.write(item["excluded_not_terms"])
                     custom_crossref = st.text_input(
-                        "Crossref-Bibliografie-Suche manuell anpassen",
+                        "Edit Crossref bibliographic search",
                         value=item["query"],
                         key="crossref_custom_probe")
                     if custom_crossref.strip():
@@ -359,19 +359,19 @@ with translate_tab:
                                           "rows": 20,
                                           "select": "DOI,title,score,type,published",
                                       }))
-                        st.link_button("Angepasste Crossref-Abfrage öffnen",
+                        st.link_button("Open customized Crossref query",
                                        custom_url)
                 if name == "Semantic Scholar":
                     st.caption(
-                        "Diese Suche gilt nur für die Academic Graph Bulk API. "
-                        "Die Websuche und /paper/search unterstützen sie nicht."
+                        "This query is valid only for the Academic Graph Bulk API. "
+                        "The website search and /paper/search do not support it."
                     )
                     if item.get("url"):
-                        with st.expander("Semantic-Scholar-API-Key und Live-Prüfung"):
+                        with st.expander("Semantic Scholar API key and live validation"):
                             s2_key = st.text_input(
-                                "Semantic Scholar API-Key (optional)",
+                                "Semantic Scholar API key (optional)",
                                 type="password", key="s2_search_key")
-                            if st.button("Bulk-Suchabfrage live überprüfen",
+                            if st.button("Validate bulk search query live",
                                          key="test_s2_search"):
                                 try:
                                     response = requests.get(
@@ -383,49 +383,49 @@ with translate_tab:
                                     if response.ok:
                                         payload = response.json()
                                         st.success(
-                                            "Semantic Scholar Bulk hat die "
-                                            "Abfrage angenommen (HTTP 200)."
+                                            "Semantic Scholar Bulk "
+                                            "accepted the query (HTTP 200)."
                                         )
                                         st.caption(
-                                            f"Geschätzte Gesamttreffer: "
-                                            f"{payload.get('total', 'nicht verfügbar')} · "
-                                            f"Datensätze auf dieser Seite: "
+                                            f"Estimated total hits: "
+                                            f"{payload.get('total', 'unavailable')} · "
+                                            f"Records on this page: "
                                             f"{len(payload.get('data') or [])}"
                                         )
                                         st.caption(
-                                            "HTTP 200 bestätigt keine Äquivalenz "
-                                            "zur Ovid-MEDLINE-Strategie."
+                                            "HTTP 200 does not establish equivalence "
+                                            "with the Ovid MEDLINE strategy."
                                         )
                                     elif response.status_code == 429:
                                         st.warning(
-                                            "HTTP 429 – S2-Anfragelimit. "
-                                            "Die Syntax konnte nicht live "
-                                            "bestätigt werden; bitte mit "
-                                            "eigenem API-Key erneut prüfen."
+                                            "HTTP 429 – S2 rate limit. "
+                                            "The syntax could not be validated "
+                                            "live; retry with "
+                                            "your own API key."
                                         )
                                     else:
                                         st.error(
-                                            f"Semantic Scholar meldet HTTP "
+                                            f"Semantic Scholar reports HTTP "
                                             f"{response.status_code}: "
                                             f"{response.text[:500]}"
                                         )
                                 except (requests.RequestException, ValueError) as exc:
-                                    st.error(f"S2 Live-Test fehlgeschlagen: {exc}")
+                                    st.error(f"S2 live test failed: {exc}")
                     else:
                         st.error(
-                            "Die API-URL ist zu lang. Diese vollständige Suche "
-                            "kann nicht als einzelner S2-Bulk-GET-Aufruf "
-                            "ausgeführt werden. Suchblöcke aufteilen und "
-                            "die Resultate anhand der Identifier zusammenführen."
+                            "The API URL is too long. This complete query "
+                            "cannot be executed as a single S2 Bulk GET request. "
+                            "Split the query into topic blocks and "
+                            "merge results by their identifiers."
                         )
                 for note in item["notes"]:
-                    if ("PROVISORISCHE" in note or "KEINE Emtree" in note or
-                            "kontrollierte Heading-Klausel(n) entfernt" in note):
+                    if ("UNVERIFIED" in note or "NOT an Emtree" in note or
+                            "controlled subject-heading clause(s) removed" in note):
                         st.warning(note)
                     else:
                         st.caption(note)
                 if item.get("removed") and item.get("mode"):
-                    with st.expander(f"Nicht exakt übertragbare Suchoperationen ({len(item['removed'])})"):
+                    with st.expander(f"Search operations without exact equivalents ({len(item['removed'])})"):
                         st.write(item["removed"])
                 if item.get("unverified"):
                     with st.expander(f"Unverified subject headings ({len(item['unverified'])})", expanded=not bool(item.get("mode"))):
@@ -435,23 +435,23 @@ with translate_tab:
                     with st.expander("Removed controlled descriptors"):
                         st.write(item["removed"])
         st.divider()
-        st.subheader("MeSH EXP: enthaltene untergeordnete Descriptors")
+        st.subheader("MeSH EXP: included narrower descriptors")
         st.caption(
-            "Quelle: offizielle NLM-MeSH-RDF-Hierarchie (aktuelle Version). "
-            "Angezeigt werden der Hauptdescriptor und alle engeren Descriptors aus der "
-            "MeSH-Baumstruktur, mit Hierarchiestufe und Tree Number. "
-            "Nicht mit MeSH Entry Terms oder kontrollierten Vokabularen von PsycINFO/Embase gleichsetzen."
+            "Source: official NLM MeSH RDF hierarchy (current version). "
+            "The root descriptor and all narrower descriptors in the "
+            "MeSH tree are displayed with depth and tree number. "
+            "Do not equate these with MeSH entry terms or controlled PsycINFO/Embase vocabularies."
         )
         exp_headings = st.session_state.get("exp_headings", [])
         source_current = source == st.session_state.get("translated_source")
         if not source_current:
-            st.warning("Der eingegebene Suchstring wurde seit der letzten Übersetzung geändert. "
-                       "Bitte erneut Translate ausführen, bevor du die EXP-Hierarchie lädst.")
+            st.warning("The search string has changed since the last translation. "
+                       "Click Translate again before loading the EXP hierarchy.")
         elif not exp_headings:
-            st.info("Keine exp-Descriptors in dieser Ovid-MEDLINE-Strategie gefunden.")
+            st.info("No exp descriptors found in this Ovid MEDLINE strategy.")
         else:
-            st.caption(f"{len(exp_headings)} unterschiedliche exp-Descriptors erkannt.")
-            if st.button("Alle MeSH-EXP-Hierarchien laden", key="load_all_mesh", type="secondary"):
+            st.caption(f"{len(exp_headings)} distinct exp descriptors detected.")
+            if st.button("Load all MeSH EXP hierarchies", key="load_all_mesh", type="secondary"):
                 for h in exp_headings:
                     identity = (h.name.casefold(), h.qualifier)
                     if identity not in st.session_state.mesh_expansions:
@@ -462,10 +462,10 @@ with translate_tab:
                         except MeSHError as exc:
                             st.session_state.mesh_errors[identity] = str(exc)
             if st.session_state.get("mesh_expansions"):
-                st.caption("Optional: zuvor geladene NLM-MeSH-Unterbegriffe können als zusätzliche "
-                           "Freitext-Phrasen in OpenAlex und Semantic Scholar aufgenommen werden. "
-                           "Das ersetzt KEINE MeSH-Indexierung.")
-                if st.button("API-Abfragen mit geladenen MeSH-EXP-Unterbegriffen aktualisieren",
+                st.caption("Optionally, previously loaded narrower NLM MeSH terms can be added as "
+                           "free-text phrases in OpenAlex and Semantic Scholar. "
+                           "This does NOT replace MeSH indexing.")
+                if st.button("Update API queries with loaded MeSH EXP descendants",
                              key="apply_exp_to_api"):
                     variants = {
                         exp.heading.name.casefold():
@@ -479,13 +479,13 @@ with translate_tab:
             for index, h in enumerate(exp_headings):
                 identity = (h.name.casefold(), h.qualifier)
                 expansion = st.session_state.mesh_expansions.get(identity)
-                label = (f"{h.label} — {expansion.children_count} untergeordnete Descriptors"
+                label = (f"{h.label} — {expansion.children_count} narrower descriptors"
                          if expansion else h.label)
                 with st.expander(label, expanded=expansion is not None):
                     if expansion is None:
-                        if st.button("MeSH-Unterbegriffe laden", key=f"load_mesh_{index}"):
+                        if st.button("Load narrower MeSH descriptors", key=f"load_mesh_{index}"):
                             try:
-                                with st.spinner(f"NLM-MeSH-Abfrage: {h.name}"):
+                                with st.spinner(f"NLM MeSH query: {h.name}"):
                                     expansion = cached_mesh_expansion(h.name, h.qualifier)
                                 st.session_state.mesh_expansions[identity] = expansion
                                 st.session_state.mesh_errors.pop(identity, None)
@@ -495,42 +495,42 @@ with translate_tab:
                             st.error(st.session_state.mesh_errors[identity])
                     if expansion is not None:
                         c_a, c_b, c_c = st.columns(3)
-                        c_a.metric("Untergeordnete Descriptors", expansion.children_count)
-                        c_b.metric("MeSH-Descriptors inkl. Hauptbegriff", expansion.descriptor_count)
-                        c_c.metric("Baumpositionen", len(expansion.positions))
+                        c_a.metric("Narrower descriptors", expansion.children_count)
+                        c_b.metric("MeSH descriptors including root", expansion.descriptor_count)
+                        c_c.metric("Tree positions", len(expansion.positions))
                         st.caption(
                             f"MeSH-ID: {expansion.mesh_id} · "
                             f"MeSH-Root-Tree(s): {', '.join(expansion.root_trees) or 'none'} · "
-                            f"Datenstand abgerufen: {expansion.fetched_utc[:10]}"
+                            f"Data retrieved: {expansion.fetched_utc[:10]}"
                         )
                         if h.qualifier:
-                            st.warning("Der Subheading-/Qualifier-Suffix wurde bei der "
-                                       "Hierarchieauflösung nicht angewendet. Qualifier-Vererbung "
-                                       "muss separat überprüft werden.")
+                            st.warning("The subheading/qualifier suffix was not used for "
+                                       "resolving the hierarchy. Qualifier inheritance "
+                                       "must be checked separately.")
                         if not expansion.root_trees:
-                            st.warning("Dieser Descriptor besitzt keine MeSH-Tree-Number; "
-                                       "es konnten keine engeren Hierarchiepositionen abgeleitet werden.")
+                            st.warning("This descriptor has no MeSH tree number; "
+                                       "no narrower tree positions could be identified.")
                         st.dataframe(mesh_display_rows(expansion), use_container_width=True,
                                      hide_index=True, column_config={
                                          "NLM": st.column_config.LinkColumn(
                                              "NLM descriptor", display_text="Open"),
                                          "Level": st.column_config.NumberColumn(
-                                             "Level", help="0 = Ausgangsdescriptor, 1 = direkte Unterkategorie"),
+                                             "Level", help="0 = root descriptor, 1 = immediate child"),
                                      })
-                        st.caption("Ein Descriptor kann mehrfach in verschiedenen MeSH-Baumzweigen vorkommen. "
-                                   "Der Descriptor-Zähler ist nach MeSH-ID dedupliziert; "
-                                   "die Tabelle enthält sämtliche Hierarchiepositionen.")
+                        st.caption("A descriptor may appear in multiple MeSH tree branches. "
+                                   "The descriptor count is deduplicated by MeSH ID; "
+                                   "the table shows all tree positions.")
                         c_csv, c_txt = st.columns(2)
                         with c_csv:
                             st.download_button(
-                                "Alle Tree-Positionen als CSV",
+                                "All tree positions as CSV",
                                 mesh_csv_export(expansion),
                                 f"mesh_exp_{expansion.mesh_id}.csv",
                                 "text/csv", key=f"mesh_csv_{index}",
                                 use_container_width=True)
                         with c_txt:
                             st.download_button(
-                                "Eindeutige Descriptors als TXT",
+                                "Unique descriptors as TXT",
                                 mesh_labels_as_text(expansion).encode("utf-8"),
                                 f"mesh_exp_{expansion.mesh_id}.txt",
                                 "text/plain", key=f"mesh_txt_{index}",
@@ -727,7 +727,7 @@ with help_tab:
     - Previously loaded MeSH EXP descendants can optionally be added as
       labelled free-text candidate phrases for OpenAlex/Semantic Scholar.
       Unverified MeSH-to-Emtree mappings are not invented.
-    - In the translator's **MeSH EXP** section, click *Alle MeSH-EXP-Hierarchien laden*
+    - In the translator's **MeSH EXP** section, click *Load all MeSH EXP hierarchies*
       or resolve one exp descriptor at a time. The NLM RDF API provides
       the source MeSH root and all narrower descriptors, levels and tree positions.
       This is the **MeSH** hierarchy only, not a PsycINFO or Emtree explosion.

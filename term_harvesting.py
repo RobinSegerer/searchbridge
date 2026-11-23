@@ -113,7 +113,7 @@ def title_tfidf(
     if n == 0:
         return HarvestResult([], 0, len(records), len(records), "TF-IDF", "No titles in sample.")
     if min_df > n:
-        raise ValueError(f"min_df={min_df} ist grösser als die Zahl vorhandener Titel ({n}).")
+        raise ValueError(f"min_df={min_df} exceeds the number of available titles ({n}).")
     stops = ENGLISH_STOPWORDS | set(word_tokens(extra_stopwords))
     exclude, prefixes = vocabulary_exclusions(query) if remove_query_terms else (set(), ())
     corpora = []

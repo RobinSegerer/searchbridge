@@ -28,6 +28,44 @@ from review_retrieval import (
 from openai_review_screening import screen_batch, DEFAULT_MODEL, SCREENING_MODELS
 
 
+def _record_fields(record) -> dict:
+    """Consistent bibliographic metadata in every screening result view."""
+    return {
+        "Title": record.title,
+        "Abstract": record.abstract,
+        "Authors": record.authors,
+        "Year": record.year,
+        "Journal": record.journal,
+        "DOI": record.doi,
+        "Database": "; ".join(record.sources) or record.source,
+    }
+
+
+def _screening_row(record, ai, overrides) -> dict:
+    human = overrides.get(record.uid, {})
+    if isinstance(human, dict):
+        human_decision = human.get("decision", "not_reviewed")
+        human_reason = human.get("reason", "")
+        reviewer = human.get("reviewer", "")
+        reviewed_utc = human.get("timestamp_utc", "")
+    else:
+        human_decision = human or "not_reviewed"
+        human_reason = reviewer = reviewed_utc = ""
+    suggestion = ai.get(record.uid, {})
+    return {
+        **_record_fields(record),
+        "UID": record.uid,
+        "Rank": record.rank_score,
+        "AI suggestion": suggestion.get("decision", ""),
+        "AI reason": suggestion.get("reason", ""),
+        "AI evidence": suggestion.get("evidence", ""),
+        "AI uncertainty": suggestion.get("uncertainty", ""),
+        "Human decision": human_decision,
+        "Human reason": human_reason,
+        "Reviewer": reviewer,
+        "Reviewed UTC": reviewed_utc,
+    }
+
 
 def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
     b = io.BytesIO()
@@ -55,17 +93,21 @@ def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
                    json.dumps(merge.audit, ensure_ascii=False, indent=2))
         z.writestr("fuzzy_candidates_manual_review.csv",
                    _dict_csv(merge.fuzzy_review))
+        # Screening exports are self-contained: metadata accompany every decision.
+        z.writestr("screening_results.csv", _dict_csv([
+            _screening_row(r, ai, overrides) for r in ordered
+        ]))
         z.writestr("human_decisions.csv", _dict_csv([
-            {"uid": uid,
-             "human_decision": info["decision"] if isinstance(info, dict) else info,
-             "human_reason": info.get("reason", "") if isinstance(info, dict) else "",
-             "reviewer": info.get("reviewer", "") if isinstance(info, dict) else "",
-             "decision_time_utc": info.get("timestamp_utc", "") if isinstance(info, dict) else ""}
-            for uid, info in overrides.items()
+            _screening_row(r, ai, overrides)
+            for r in ordered if r.uid in overrides
         ]))
         if ai:
             z.writestr("ai_screening_suggestions.json",
                        json.dumps(ai, ensure_ascii=False, indent=2))
+            z.writestr("ai_screening_suggestions.csv", _dict_csv([
+                _screening_row(r, ai, overrides)
+                for r in ordered if r.uid in ai
+            ]))
         z.writestr("screening_criteria_and_run_audit.json",
                    json.dumps(screening_runs, ensure_ascii=False, indent=2))
     return b.getvalue()
@@ -83,14 +125,14 @@ def _dict_csv(rows: list[dict]) -> bytes:
 
 
 def render() -> None:
-    st.subheader("Review Pipeline · Suche → Merge → Deduplikation → Ranking → Screening")
+    st.subheader("Review Pipeline · Search → Merge → Deduplication → Ranking → Screening")
     st.caption(
-        "Reproduzierbarer Mehrdatenbank-Workflow mit Herkunftsnachweisen. "
-        "Nicht als automatischer Ersatz für vollständige Datenbankrecherchen, "
-        "PRISMA-Dokumentation oder unabhängiges Screening."
+        "Reproducible multi-database workflow with provenance tracking. "
+        "Not a substitute for comprehensive database searching, "
+        "PRISMA documentation, or independent screening."
     )
 
-    st.markdown("#### 1 · Datenquellen auswählen und abfragen")
+    st.markdown("#### 1 · Select and search data sources")
     translations = st.session_state.get("translations") or {}
     initial_pubmed = (translations.get("PubMed") or {}).get(
         "query", '("social media"[tiab] AND student*[tiab])')
@@ -107,52 +149,52 @@ def render() -> None:
         with selection[2]:
             use_scopus = st.checkbox("Scopus Search API", value=False)
         pubmed_q = st.text_area(
-            "PubMed-Suchanfrage (PubMed-Syntax)",
+            "PubMed query (PubMed syntax)",
             initial_pubmed,
-            height=78, help=("Nicht Ovid Syntax: PubMed [tiab], [mh] usw. "
-                              "Eine zuvor im Translator erzeugte PubMed-Abfrage "
-                              "wird hier automatisch vorausgefüllt."))
+            height=78, help=("Use PubMed syntax, not Ovid: [tiab], [mh], etc. "
+                              "A PubMed query generated in the translator "
+                              "is prefilled automatically."))
         openalex_q = st.text_area(
-            "OpenAlex OQL (kann aus Search String Translator übernommen werden)",
+            "OpenAlex OQL (can be imported from Search String Translator)",
             initial_oa, height=110)
         scopus_q = st.text_area(
-            "Scopus Advanced Search (z. B. TITLE-ABS-KEY(...))",
+            "Scopus Advanced Search (e.g. TITLE-ABS-KEY(...))",
             initial_scopus, height=75)
         opts = st.columns(4)
         with opts[0]:
             per_source_limit = st.number_input(
-                "Max. Publikationen je API", min_value=1,
+                "Maximum publications per API", min_value=1,
                 max_value=2000, value=100, step=25)
         with opts[1]:
-            pubmed_email = st.text_input("NCBI E-Mail (optional)")
-            pubmed_key = st.text_input("NCBI API-Key", type="password")
+            pubmed_email = st.text_input("NCBI email (optional)")
+            pubmed_key = st.text_input("NCBI API key", type="password")
         with opts[2]:
-            openalex_key = st.text_input("OpenAlex API-Key", type="password")
+            openalex_key = st.text_input("OpenAlex API key", type="password")
         with opts[3]:
-            scopus_key = st.text_input("Scopus API-Key", type="password")
+            scopus_key = st.text_input("Scopus API key", type="password")
             scopus_token = st.text_input(
-                "Scopus Institutions-Token (optional)", type="password")
+                "Scopus institutional token (optional)", type="password")
         submitted = st.form_submit_button(
-            "Datenbanken abfragen und zusammenführen", type="primary",
+            "Search databases and merge records", type="primary",
             key="review_fetch_and_merge")
     ris_files = st.file_uploader(
-        "Weitere Quellen: RIS-Exportdateien (z. B. Web of Science, Ovid, Embase)",
+        "Other sources: RIS files (e.g. Web of Science, Ovid, Embase)",
         type=["ris"], accept_multiple_files=True, key="review_ris_files",
-        help="Eine RIS-Datei pro Quelle. Der Dateiname wird als Provenienz "
-             "gespeichert. Uploads sind nicht automatisch ausgewertet; "
-             "klicke anschliessend auf den Abruf-Button."
+        help="One RIS file per source. The filename is preserved "
+             "as provenance. Uploaded files are not processed automatically; "
+             "click the search and merge button to include them."
     )
 
     st.caption(
-        "Deduplikation: konservative Python-Regeln nach DOI, PMID und "
-        "normalisiertem Titel/Jahr. Ähnliche Titel werden zur manuellen "
-        "Prüfung markiert, nicht automatisch entfernt. "
-        "ASySD wird hier nicht angeboten, solange die R-Integration "
-        "nicht vollständig funktionsgeprüft ist."
+        "Deduplication uses conservative Python rules for DOI, PMID, and "
+        "normalized title/year. Similar titles are flagged for manual "
+        "review, not removed automatically. "
+        "ASySD is not offered until its R integration "
+        "has been fully validated."
     )
     if submitted:
         if not (use_pubmed or use_openalex or use_scopus or ris_files):
-            st.warning("Wähle mindestens eine API oder lade eine RIS-Datei hoch.")
+            st.warning("Select at least one API or upload an RIS file.")
         else:
             raw = []
             audit = []
@@ -186,25 +228,25 @@ def render() -> None:
                 ))
             total_jobs = len(source_jobs) + len(ris_files or [])
             overall = st.progress(
-                0.0, text=f"Start: 0 von {total_jobs} Quellen verarbeitet")
+                0.0, text=f"Starting: 0 of {total_jobs} sources processed")
             current = st.progress(
-                0.0, text="Warte auf erste Datenquelle")
+                0.0, text="Waiting for first data source")
             steps_text = st.empty()
             steps_text.caption(
-                "Der Balken zeigt tatsächlich abgerufene Datensätze und "
-                "abgeschlossene Verarbeitungsschritte – keine geschätzte Restzeit."
+                "The bar reflects records actually retrieved and "
+                "completed processing stages, not an estimated time remaining."
             )
 
             def source_progress(index, source, done, total):
                 completed = min(1.0, done / total) if total else 1.0
                 overall.progress(
                     min(0.8, 0.8 * (index + completed) / max(1, total_jobs)),
-                    text=f"Quelle {index + 1}/{total_jobs}: {source}"
+                    text=f"Source {index + 1}/{total_jobs}: {source}"
                 )
                 current.progress(
                     completed,
-                    text=f"{source}: {done:,} von "
-                         f"{total:,} vorgesehenen Datensätzen"
+                    text=f"{source}: {done:,} of "
+                         f"{total:,} planned records"
                 )
 
             job_index = 0
@@ -212,10 +254,10 @@ def render() -> None:
                 source_progress(job_index, enabled_source, 0,
                                 int(per_source_limit))
                 if not original_query.strip():
-                    failures.append(f"{enabled_source}: Suchanfrage fehlt.")
+                    failures.append(f"{enabled_source}: Missing search query.")
                     audit.append({
                         "source": enabled_source, "query": original_query,
-                        "status": "failed", "error": "Suchanfrage fehlt",
+                        "status": "failed", "error": "Missing search query",
                         "complete": False, "retrieved": 0,
                     })
                 else:
@@ -249,7 +291,7 @@ def render() -> None:
                 source_progress(job_index, label, 0, 1)
                 try:
                     if upload.size > 25 * 1024 * 1024:
-                        raise ValueError("Datei überschreitet 25 MB.")
+                        raise ValueError("File exceeds 25 MB.")
                     recs, encoding = parse_ris(upload.getvalue())
                     converted = from_ris(recs, label)
                     raw.extend(converted)
@@ -276,9 +318,9 @@ def render() -> None:
             if raw:
                 # Progress of the three *actual* dedup phases.
                 phases = {
-                    "Identifier abgleichen": (0.80, 0.91),
-                    "Metadaten zusammenführen": (0.91, 0.97),
-                    "Ähnliche Titel prüfen": (0.97, 1.00),
+                    "Matching identifiers": (0.80, 0.91),
+                    "Merging metadata": (0.91, 0.97),
+                    "Checking similar titles": (0.97, 1.00),
                 }
 
                 def dedup_progress(phase, done, total):
@@ -286,14 +328,14 @@ def render() -> None:
                     frac = min(1.0, done / total) if total else 1.0
                     overall.progress(
                         start + (finish - start) * frac,
-                        text="Deduplikation: " + phase
+                        text="Deduplication: " + phase
                     )
                     current.progress(
                         frac, text=f"{phase}: {done:,} / {total:,}"
                     )
 
                 merged = merge_records(raw, progress=dedup_progress)
-                engine = "Python DOI/PMID/Titel+Jahr + manuelle Ähnlichkeitskandidaten"
+                engine = "Python DOI/PMID/title+year + manual similarity candidates"
                 audit.append({
                     "source": "DEDUPLICATION", "query": "",
                     "status": "completed", "dedup_engine": engine,
@@ -305,22 +347,22 @@ def render() -> None:
                 st.session_state.review_human = {}
                 st.session_state.review_screening_runs = []
                 st.session_state.review_dedup_engine = engine
-                overall.progress(1.0, text="Abfrage und Deduplikation abgeschlossen")
+                overall.progress(1.0, text="Retrieval and deduplication complete")
                 current.empty()
                 steps_text.caption(
-                    f"Abgeschlossen: {len(raw):,} Rohdatensätze, "
-                    f"{len(merged.records):,} eindeutige Datensätze, "
-                    f"{merged.duplicates_removed:,} Dubletten entfernt."
+                    f"Completed: {len(raw):,} raw records, "
+                    f"{len(merged.records):,} unique records, "
+                    f"{merged.duplicates_removed:,} duplicates removed."
                 )
                 st.success(
-                    f"{len(raw):,} Datensätze eingelesen → "
-                    f"{len(merged.records):,} nach Deduplikation."
+                    f"{len(raw):,} records loaded → "
+                    f"{len(merged.records):,} after deduplication."
                 )
             else:
                 st.session_state.pop("review_data", None)
-                overall.progress(1.0, text="Abruf beendet – keine Datensätze verfügbar")
+                overall.progress(1.0, text="Retrieval finished – no records available")
                 current.empty()
-                st.error("Keine Datensätze verfügbar; kein Screening möglich.")
+                st.error("No records available; screening is not possible.")
 
     if "review_data" not in st.session_state:
         return
@@ -328,147 +370,135 @@ def render() -> None:
     merged, search_log = st.session_state.review_data
     records = merged.records
     st.divider()
-    st.markdown("#### 2 · Merge und Deduplikation")
+    st.markdown("#### 2 · Merge and deduplication")
     m = st.columns(4)
-    m[0].metric("Rohdatensätze", merged.input_count)
-    m[1].metric("Eindeutig nach Deduplikation", len(records))
-    m[2].metric("Automatisch entfernte Dubletten", merged.duplicates_removed)
-    m[3].metric("Unsichere Dublettenpaare (manuell)", len(merged.fuzzy_review))
+    m[0].metric("Raw records", merged.input_count)
+    m[1].metric("Unique after deduplication", len(records))
+    m[2].metric("Automatically removed duplicates", merged.duplicates_removed)
+    m[3].metric("Potential duplicates (manual review)", len(merged.fuzzy_review))
     if merged.fuzzy_skipped:
         st.warning(
-            "Für einige sehr grosse Jahresgruppen wurde die "
-            "quadratische Ähnlichkeitsprüfung aus Performancegründen "
-            "übersprungen: " + ", ".join(
-                f"{year}: {n} Datensätze"
+            "For some very large year groups, the "
+            "quadratic similarity check was skipped for performance reasons: "
+            "" + ", ".join(
+                f"{year}: {n} records"
                 for year, n in merged.fuzzy_skipped.items()
-            ) + ". Diese Paare sind nicht automatisch als dublettenfrei bestätigt."
+            ) + ". These records have not been confirmed as duplicate-free."
         )
     st.caption(
-        "Verwendet: " + st.session_state.get(
-            "review_dedup_engine", "Python DOI/PMID/Titel+Jahr"
-        ) + ". Keine unbestätigten Dubletten werden automatisch entfernt. "
-        "Bei ASySD stammen die Vorschläge aus der offiziellen R-Pipeline; "
-        "bei Python aus einer Ähnlichkeitsprüfung ab 0.94."
+        "Method: " + st.session_state.get(
+            "review_dedup_engine", "Python DOI/PMID/title+year"
+        ) + ". Unconfirmed duplicates are never removed automatically. "
+        "ASySD candidates come from the official R pipeline; "
+        "Python candidates use a similarity threshold of 0.94."
     )
     st.dataframe([
-        {"Quelle": a.get("source"),
-         "Treffer insgesamt": (
+        {"Source": a.get("source"),
+         "Total hits": (
              str(a["total_hits"]) if a.get("total_hits") is not None else "—"
          ),
-         "Abgerufen": a.get("retrieved", 0),
-         "Vollständig": a.get("complete", False),
+         "Retrieved": a.get("retrieved", 0),
+         "Complete": a.get("complete", False),
          "Status": a.get("status")} for a in search_log
     ], hide_index=True, use_container_width=True)
     if any(a.get("complete") is False for a in search_log):
         st.warning(
-            "Mindestens eine Suchquelle ist fehlgeschlagen oder begrenzt. "
-            "Diese Ergebnismenge ist NICHT vollständig. "
-            "Für systematische Reviews bitte alle Suchläufe "
-            "separat dokumentieren und vervollständigen."
+            "At least one search source failed or was limited. "
+            "This result set is NOT complete. "
+            "For systematic reviews, document and complete "
+            "all searches separately."
         )
     if merged.audit:
-        with st.expander("Automatisch zusammengeführte Dubletten (Audit)"):
+        with st.expander("Automatically merged duplicates (audit)"):
             st.dataframe(merged.audit, hide_index=True, use_container_width=True)
     if merged.fuzzy_review:
         st.warning(
-            f"{len(merged.fuzzy_review)} ähnliche Titel müssen manuell geprüft "
-            "werden. Sie wurden bewusst NICHT automatisch zusammengeführt."
+            f"{len(merged.fuzzy_review)} similar titles require manual review "
+            "and have NOT been merged automatically."
         )
-        with st.expander("Fuzzy-Dubletten, manuelle Entscheidung erforderlich"):
+        with st.expander("Potential duplicates requiring manual decisions"):
             st.dataframe(merged.fuzzy_review, hide_index=True,
                          use_container_width=True)
 
     st.divider()
-    st.markdown("#### 3 · Ranking zur Screening-Priorisierung")
+    st.markdown("#### 3 · Ranking for screening prioritization")
     focus = st.text_area(
-        "Forschungsthema / Zielkonzept zur Ranking-Berechnung",
+        "Research topic / target concept for ranking",
         "social media use and academic self concept among university students",
         key="review_focus", height=75,
-        help="Dieses Ranking ist lexikalisch und keine "
-             "Ein-/Ausschlussentscheidung."
+        help="This ranking is lexical, not an "
+             "inclusion/exclusion decision."
     )
     ordered = lexical_rank(records, focus)
     st.caption(
-        "Titelgewichtiges lexikalisches TF-IDF-Cosinus-Ranking. "
-        "Ein niedriger Score bedeutet NICHT, dass eine Studie ausgeschlossen "
-        "werden darf. Kein Datensatz wird durch das Ranking entfernt."
+        "Title-weighted lexical TF-IDF cosine ranking. "
+        "A low score does NOT justify excluding a study "
+        "and no records are removed by ranking."
     )
     ai = st.session_state.setdefault("review_ai", {})
     human = st.session_state.setdefault("review_human", {})
-    items = []
-    for r in ordered[:300]:
-        choice = ai.get(r.uid, {})
-        items.append({
-            "uid": r.uid, "Title": r.title, "Year": r.year,
-            "DOI": r.doi, "Sources": ", ".join(r.sources),
-            "Rank": r.rank_score, "Abstract present": bool(r.abstract),
-            "AI suggestion": choice.get("decision", ""),
-            "AI reason": choice.get("reason", ""),
-            "Human decision": (human.get(r.uid, {}).get("decision", "not_reviewed")
-                               if isinstance(human.get(r.uid), dict)
-                               else human.get(r.uid, "not_reviewed")),
-        })
+    items = [_screening_row(r, ai, human) for r in ordered[:300]]
     st.dataframe(items, hide_index=True, use_container_width=True)
     if len(ordered) > 300:
-        st.caption("Tabellenvorschau auf 300 Datensätze begrenzt; Exporte enthalten alle.")
+        st.caption("Table preview limited to 300 records; exports contain all records.")
 
     st.divider()
-    st.markdown("#### 4 · Optionales OpenAI-Titel-/Abstract-Screening")
+    st.markdown("#### 4 · Optional OpenAI title/abstract screening")
     st.warning(
-        "OpenAI-Screening ist eine **Vorsortierung**, kein automatischer "
-        "Review-Entscheid. Titel und Abstracts werden dabei an die OpenAI API "
-        "übertragen und es können API-Kosten anfallen. "
-        "Nur Records mit vollständigem Kontext sollten verwendet werden. "
-        "Publikationen ohne Abstract erhalten grundsätzlich MANUAL REVIEW. "
-        "Bei lizenzierten Daten (z. B. Scopus) müssen Weitergaberechte "
-        "zusätzlich geprüft werden."
+        "OpenAI screening is **prioritization**, not an automatic "
+        "review decision. Titles and abstracts are sent to the OpenAI API "
+        "and API charges may apply. "
+        "Only records with sufficient context should be used. "
+        "Records without abstracts should receive MANUAL REVIEW. "
+        "For licensed records (e.g. Scopus), sharing permissions "
+        "must also be checked."
     )
     criteria = st.text_area(
-        "Einschlusskriterien / PICO / PCC (konkret und operationalisiert)",
+        "Eligibility criteria / PICO / PCC (explicit and operationalized)",
         value="",
-        placeholder=("Beschreibe alle obligatorischen Einschlusskriterien "
-                     "und explizite Ausschlusskriterien (PICO/PCC). "
-                     "Nur eindeutig nicht erfüllte Kriterien rechtfertigen "
-                     "einen Exclude-Vorschlag."),
+        placeholder=("Describe every mandatory inclusion criterion "
+                     "and explicit exclusion criteria (PICO/PCC). "
+                     "Only clearly unmet criteria justify "
+                     "a suggestion to exclude."),
         height=125, key="review_eligibility",
     )
     q1, q2, q3 = st.columns([1, 1, 1])
     with q1:
         openai_model = st.selectbox(
-            "OpenAI-Modell",
+            "OpenAI model",
             options=list(SCREENING_MODELS.values()),
             index=list(SCREENING_MODELS.values()).index(DEFAULT_MODEL),
             format_func=lambda m: next(
                 (name + " · " + m for name, value in SCREENING_MODELS.items()
                  if value == m), m),
             key="review_openai_model",
-            help="Terra ist der Standard. Sol eignet sich für komplexere "
-                 "Fälle, Luna für kostensensitive grössere Stichproben. "
-                 "Verfügbarkeit hängt vom API-Zugang ab."
+            help="Terra is the default. Sol is suited to more complex "
+                 "cases; Luna to cost-sensitive larger samples. "
+                 "Availability depends on API access."
         )
     with q2:
         openai_key = st.text_input(
             "OpenAI API-Key", type="password", key="review_openai_key")
     with q3:
         screen_limit = st.number_input(
-            "Max. Datensätze vorscreenen", min_value=1, max_value=60,
+            "Maximum records to pre-screen", min_value=1, max_value=60,
             value=20, step=5, key="review_screen_limit")
     share = st.checkbox(
-        "Ich bestätige, dass ich die Weitergabe dieser Titel und Abstracts "
-        "an die OpenAI API sowie mögliche Kosten geprüft habe.",
+        "I confirm that I have reviewed sharing these titles and abstracts "
+        "with the OpenAI API and any applicable costs.",
         value=False, key="review_screen_consent")
     st.caption(
-        "Es werden nur die ersten N Datensätze des Rankings übertragen. "
-        "Keine API-Keys werden in Exporte oder GitHub geschrieben. "
-        "Die API-Anfragen setzen store=false."
+        "Only the first N ranked records are transmitted. "
+        "No API keys are included in exports or committed to GitHub. "
+        "API requests set store=false."
     )
     if st.button(
-        "OpenAI-Vorscreening ausführen",
+        "Run OpenAI pre-screening",
         disabled=not share or not openai_key.strip() or len(criteria.strip()) < 12,
         key="review_screen_start",
     ):
         bar = st.progress(0.0)
-        with st.spinner("OpenAI-Structured-Outputs auswerten"):
+        with st.spinner("Processing OpenAI structured outputs"):
             result = screen_batch(
                 ordered, criteria=criteria, key=openai_key,
                 model=openai_model.strip(), max_items=int(screen_limit),
@@ -491,34 +521,30 @@ def render() -> None:
         for err in result.errors:
             st.warning(err)
         st.success(
-            f"{result.attempted} Studien zur Vorsortierung verarbeitet. "
-            "Alle Vorschläge müssen von Menschen überprüft werden."
+            f"{result.attempted} records processed for prioritization. "
+            "All suggestions require human review."
         )
         st.rerun()
 
     if ai:
         count = Counter(v.get("decision", "") for v in ai.values())
         st.caption(
-            "OpenAI-Vorschläge: "
+            "OpenAI suggestions: "
             f"{count.get('include',0)} Include, "
             f"{count.get('exclude',0)} Exclude, "
             f"{count.get('manual_review',0)} Manual review."
         )
-        with st.expander("OpenAI-Vorschläge mit Evidenz und Unsicherheit"):
+        with st.expander("OpenAI suggestions with evidence and uncertainty"):
             st.dataframe([
-                {"uid": r.uid, "Title": r.title,
-                 "AI": ai.get(r.uid, {}).get("decision", ""),
-                 "Reason": ai.get(r.uid, {}).get("reason", ""),
-                 "Evidence": ai.get(r.uid, {}).get("evidence", ""),
-                 "Uncertainty": ai.get(r.uid, {}).get("uncertainty", "")}
+                _screening_row(r, ai, human)
                 for r in ordered if r.uid in ai
             ], hide_index=True, use_container_width=True)
 
-    st.markdown("#### 5 · Menschliches Titel-/Abstract-Screening")
+    st.markdown("#### 5 · Human title/abstract screening")
     st.caption(
-        "Jede finale Entscheidung erfolgt anhand des angezeigten Titels "
-        "und des vollständigen Abstracts. Die OpenAI-Einschätzung ist "
-        "nur eine unabhängige Empfehlung, keine vorgewählte Entscheidung."
+        "Every final decision must be based on the displayed title "
+        "and full abstract. The OpenAI assessment is "
+        "an independent suggestion, never a preselected decision."
     )
     def _human_label(uid):
         state = human.get(uid, "not_reviewed")
@@ -526,64 +552,66 @@ def render() -> None:
 
     total_done = sum(_human_label(r.uid) != "not_reviewed" for r in ordered)
     st.progress(total_done / len(ordered), text=(
-        f"{total_done:,} / {len(ordered):,} manuell gescreent"
+        f"{total_done:,} / {len(ordered):,} screened manually"
     ))
     only_pending = st.checkbox(
-        "Nur noch nicht gescreente Studien anzeigen",
+        "Show only unscreened studies",
         value=True, key="review_only_pending")
     pool = [r for r in ordered if not only_pending or
             _human_label(r.uid) == "not_reviewed"]
     if not pool:
-        st.success("Alle verfügbaren Studien sind manuell bewertet.")
-        st.caption("Häkchen bei 'nur noch nicht gescreente' entfernen, "
-                   "um abgeschlossene Entscheidungen erneut zu prüfen.")
+        st.success("All available studies have been screened manually.")
+        st.caption("Uncheck 'Show only unscreened studies' "
+                   "to revisit completed decisions.")
     else:
         options_by_uid = {r.uid: r for r in pool}
         selected_uid = st.selectbox(
-            "Studie zur menschlichen Prüfung auswählen",
+            "Select a study for human review",
             options=list(options_by_uid),
             format_func=lambda uid: (
                 f"{next((i + 1 for i, r in enumerate(ordered) if r.uid == uid), '?')}"
                 f" · {options_by_uid[uid].title[:110]}"
-                + (" · Abstract fehlt" if not options_by_uid[uid].abstract else "")
+                + (" · Abstract missing" if not options_by_uid[uid].abstract else "")
             ),
             key="review_selected_uid",
         )
         selected = options_by_uid[selected_uid]
-        st.markdown("##### " + selected.title)
+        st.markdown("##### " + (selected.title or "Untitled record"))
+        st.markdown("**Authors:** " + (selected.authors or "Not available"))
         st.caption(
-            f"Jahr: {selected.year or 'unbekannt'} · DOI: "
-            f"{selected.doi or 'nicht vorhanden'} · PMID: "
-            f"{selected.pmid or 'nicht vorhanden'}"
+            f"**Year:** {selected.year or 'Not available'} · "
+            f"**Journal:** {selected.journal or 'Not available'} · "
+            f"**DOI:** {selected.doi or 'Not available'}"
         )
         st.caption(
-            "Quelle(n): " + ", ".join(selected.sources)
-            + " · Rank: " + str(selected.rank_score)
+            "**Database:** " + ("; ".join(selected.sources) or selected.source or "Not available")
+            + f" · PMID: {selected.pmid or 'Not available'}"
+            + f" · Rank: {selected.rank_score}"
         )
-        st.markdown("**Abstract (vollständig)**")
+        st.markdown("**Abstract**")
         if selected.abstract:
             st.markdown(selected.abstract)
         else:
             st.warning(
-                "Kein Abstract vorhanden. Ohne zusätzliche Information "
-                "ist die Eignung häufig nicht entscheidbar. "
-                "Bitte das Original prüfen und gegebenenfalls "
-                "'Manual Review' auswählen."
+                "No abstract available. Without further information, "
+                "eligibility often cannot be determined. "
+                "Check the original publication and consider "
+                "selecting 'Manual Review'."
             )
         suggestion = ai.get(selected_uid)
         if suggestion:
-            with st.expander("OpenAI-Vorschlag – nicht bindend", expanded=True):
+            with st.expander("OpenAI suggestion – not binding", expanded=True):
                 st.markdown(
-                    "**Vorschlag:** " + suggestion.get("decision", "unbekannt")
-                    + " · **Unsicherheit:** "
-                    + suggestion.get("uncertainty", "unbekannt")
+                    "**Suggestion:** " + suggestion.get("decision", "unknown")
+                    + " · **Uncertainty:** "
+                    + suggestion.get("uncertainty", "unknown")
                 )
-                st.markdown("**Modellbegründung:** "
+                st.markdown("**Model rationale:** "
                             + suggestion.get("reason", ""))
                 if suggestion.get("evidence"):
-                    st.markdown("**Beleg im Artikeltext:** "
+                    st.markdown("**Evidence in article text:** "
                                 + suggestion["evidence"])
-                st.caption("Modell: " + suggestion.get("model", ""))
+                st.caption("Model: " + suggestion.get("model", ""))
         state = human.get(selected_uid, {})
         previous = (state.get("decision", "not_reviewed")
                     if isinstance(state, dict) else state)
@@ -592,38 +620,38 @@ def render() -> None:
         decisions = ["not_reviewed", "include", "exclude", "manual_review"]
         with st.form("review_human_full_abstract_form", clear_on_submit=False):
             decision = st.radio(
-                "Deine unabhängige finale Titel-/Abstract-Entscheidung",
+                "Your independent final title/abstract decision",
                 options=decisions,
                 index=decisions.index(previous) if previous in decisions else 0,
                 horizontal=True,
                 key=f"review_human_choice_{selected_uid}",
             )
             reason = st.text_area(
-                "Begründung für die Entscheidung",
+                "Reason for the decision",
                 value=previous_reason, height=85,
                 key=f"review_human_reason_{selected_uid}",
-                placeholder="Welches Einschluss- oder Ausschlusskriterium "
-                            "ist erfüllt beziehungsweise eindeutig verletzt?"
+                placeholder="Which inclusion or exclusion criterion "
+                            "is met or clearly not met?"
             )
             reviewer = st.text_input(
-                "Reviewer-Kürzel (optional)",
+                "Reviewer initials (optional)",
                 value=previous_reviewer,
                 key=f"review_human_reviewer_{selected_uid}",
             )
             save_human = st.form_submit_button(
-                "Menschliche Entscheidung speichern und weiter",
+                "Save human decision and continue",
                 type="primary"
             )
         if save_human:
             if decision == "exclude" and not reason.strip():
                 st.error(
-                    "Für einen Ausschluss muss ein verletztes "
-                    "Ausschluss-/Einschlusskriterium dokumentiert werden."
+                    "For exclusion, an unmet "
+                    "eligibility criterion must be documented."
                 )
             elif decision == "include" and not selected.abstract:
                 st.warning(
-                    "Kein Abstract vorhanden. Bitte Original und "
-                    "Volltext prüfen; vorläufig 'Manual Review' verwenden."
+                    "No abstract available. Check the original and "
+                    "full text; use 'Manual Review' for now."
                 )
             else:
                 if decision == "not_reviewed":
@@ -635,42 +663,39 @@ def render() -> None:
                         "reviewer": reviewer.strip(),
                         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                     }
-                st.success("Menschliche Entscheidung gespeichert.")
+                st.success("Human decision saved.")
                 st.rerun()
 
-    with st.expander("Gespeicherte menschliche Entscheidungen"):
+    with st.expander("Saved human decisions"):
         st.dataframe([
-            {"UID": r.uid, "Titel": r.title,
-             "Entscheidung": _human_label(r.uid),
-             "Begründung": (human.get(r.uid) or {}).get("reason", "")
-                           if isinstance(human.get(r.uid), dict) else "",
-             "Abstract vorhanden": bool(r.abstract),
-             "KI-Vorschlag": ai.get(r.uid, {}).get("decision", "")}
+            _screening_row(r, ai, human)
             for r in ordered if _human_label(r.uid) != "not_reviewed"
         ], hide_index=True, use_container_width=True)
 
     st.divider()
-    st.markdown("#### 6 · Reproduzierbarer Export")
+    st.markdown("#### 6 · Reproducible export")
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.download_button("Dedupliziert: RIS", ris_bytes(ordered),
+        st.download_button("Deduplicated: RIS", ris_bytes(ordered),
                            "searchbridge_merged.ris",
                            "application/x-research-info-systems",
                            use_container_width=True)
     with c2:
-        st.download_button("Datensätze + AI: CSV", csv_bytes(ordered, ai),
-                           "searchbridge_merged.csv", "text/csv",
+        st.download_button("Screening results: CSV",
+                           _dict_csv([_screening_row(r, ai, human)
+                                      for r in ordered]),
+                           "searchbridge_screening_results.csv", "text/csv",
                            use_container_width=True)
     with c3:
         st.download_button(
-            "Audit + Datensätze + Screening (ZIP)",
+            "Audit + records + screening (ZIP)",
             _bundle(merged, ordered, search_log, ai, human,
                     st.session_state.get("review_screening_runs", [])),
             "searchbridge_review_pipeline.zip",
             "application/zip", use_container_width=True, type="primary")
     st.info(
-        "Das ZIP enthält die vollständige deduplizierte Trefferliste, "
-        "Quellenprotokoll, Deduplikations-Audit, Fuzzy-Prüfliste, "
-        "separate KI-Vorschläge und menschliche Entscheidungen. "
-        "Ein vollständiger PRISMA-Flowchart ist damit noch nicht automatisch erstellt."
+        "The ZIP contains the complete deduplicated record list, "
+        "source log, deduplication audit, potential duplicate list, "
+        the full screening results table, AI suggestions, and human decisions. "
+        "This does not automatically create a complete PRISMA flowchart."
     )

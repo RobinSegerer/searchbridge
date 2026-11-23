@@ -21,8 +21,8 @@ from review_core import ReviewRecord
 DEFAULT_MODEL = "gpt-6.1-terra"
 SCREENING_MODELS = {
     "Terra (ausgewogen)": "gpt-6.1-terra",
-    "Sol (höhere Kapazität)": "gpt-6.2-sol",
-    "Luna (kostengünstig)": "gpt-6-luna",
+    "Sol (higher capacity)": "gpt-6.2-sol",
+    "Luna (cost-efficient)": "gpt-6-luna",
 }
 
 SCHEMA = {

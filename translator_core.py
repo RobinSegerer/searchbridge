@@ -92,7 +92,7 @@ def lex(source: str) -> List[Token]:
         buf.append(ch)
         i += 1
     if quote:
-        raise ParseError("Nicht geschlossene Anführungszeichen im Suchstring.")
+        raise ParseError("Unclosed quotation marks in the query.")
     flush()
     return result
 
@@ -118,7 +118,7 @@ class Parser:
         tree = self.expression(0)
         if self.current() is not None:
             cur = self.current()
-            raise ParseError(f"Unerwartetes Element bei Zeichen {cur.pos + 1}: {cur.value}")
+            raise ParseError(f"Unexpected token at character {cur.pos + 1}: {cur.value}")
         return tree
 
     def expression(self, precedence: int) -> Node:
@@ -141,30 +141,30 @@ class Parser:
             inner = self.expression(0)
             closing = self.take()
             if closing.typ != "RP":
-                raise ParseError(f"Fehlende schliessende Klammer vor Zeichen {closing.pos + 1}.")
+                raise ParseError(f"Missing closing parenthesis before character {closing.pos + 1}.")
             node = inner
         elif tok.typ == "TEXT":
             node = Node("heading" if _HEADING_RE.fullmatch(tok.value) else "text", tok.value)
         else:
-            raise ParseError(f"Unerwartetes '{tok.value}' bei Zeichen {tok.pos+1}.")
+            raise ParseError(f"Unexpected '{tok.value}' at character {tok.pos+1}.")
         if self.current() is not None and self.current().typ == "FIELD":
             field = self.take().value
             if node.kind == "heading":
-                raise ParseError("Ein kontrollierter Descriptor kann nicht gleichzeitig einen Freitext-Feldcode erhalten.")
+                raise ParseError("A controlled descriptor cannot also carry a free-text field code.")
             node = Node("field", field, node)
         return node
 
 
 def parse_ovid(source: str) -> Node:
     if re.search(r"(?m)^\s*\d+\s*\.", source):
-        raise ParseError("Nummerierte Ovid-Suchhistories sind in dieser Version nicht unterstützt. Bitte eine kombinierte Abfrage ohne Zeilennummern eingeben.")
+        raise ParseError("Numbered Ovid search histories are not supported in this version. Enter a combined query without line numbers.")
     return Parser(lex(source)).parse()
 
 
 def heading_details(raw: str) -> Tuple[str, bool, str]:
     m = _HEADING_RE.fullmatch(raw)
     if not m:
-        raise ParseError(f"Ungültiger Heading-Ausdruck: {raw}")
+        raise ParseError(f"Invalid subject-heading expression: {raw}")
     name = next(v for v in m.groups()[1:4] if v is not None).strip()
     return name, bool(m.group(1)), (m.group(5) or "").lower()
 
@@ -177,7 +177,7 @@ def simplify(node: Optional[Node], target: str, mappings: Dict[str, str], notes:
         key = name.casefold()
         mapped = mappings.get(key, "").strip() if target in ("Ovid PsycINFO", "Elsevier Embase.com") else ""
         if mapped:
-            notes.append(f"Mapping manuell vorgegeben: {name} → {mapped}; Hierarchie/Qualifier bitte prüfen.")
+            notes.append(f"Mapping provided manually: {name} → {mapped}; verify hierarchy and qualifier.")
             return Node("mapped_heading", ("exp " if exploded else "") + mapped + "/" + (subheading if subheading else ""))
         # Do not silently delete subject headings from databases that support them.
         # Ovid PsycINFO uses the same heading syntax but *not* the same thesaurus;
@@ -204,18 +204,18 @@ def simplify(node: Optional[Node], target: str, mappings: Dict[str, str], notes:
             return None
         if left is None or right is None:
             if node.value == "NOT" and left is None:
-                notes.append("Ein NOT-Zweig ohne linken Freitextteil wurde entfernt; prüfe die Suchlogik.")
+                notes.append("A NOT branch with no left-hand free-text expression was removed; check the query logic.")
                 return None
-            notes.append(f"Teil einer {node.value}-Verknüpfung enthielt nur kontrolliertes Vokabular und wurde entfernt. Retrieval kann sich ändern.")
+            notes.append(f"Part of a {node.value} expression contained only controlled vocabulary and was removed. Retrieval may change.")
             return left if left is not None else right
         return Node(node.kind, node.value, left, right)
-    raise ParseError(f"Interner Knotentyp nicht unterstützt: {node.kind}")
+    raise ParseError(f"Unsupported internal node type: {node.kind}")
 
 
 def _term(text: str, target: str, notes: List[str]) -> str:
     txt = text.strip()
     if not txt:
-        raise ParseError("Leerer Freitextbegriff.")
+        raise ParseError("Empty free-text term.")
     if target == "Elsevier Embase.com":
         if txt.startswith('"') and txt.endswith('"'):
             txt = "'" + txt[1:-1].replace("'", "\\'") + "'"
@@ -225,7 +225,7 @@ def _term(text: str, target: str, notes: List[str]) -> str:
         if " " in txt and not (txt.startswith('"') and txt.endswith('"')):
             txt = '"' + txt.strip("'") + '"'
     if re.search(r"\$\d+|\#", txt):
-        notes.append(f"Ovid-Trunkierung '{txt}' benötigt manuelle Prüfung auf Zieldatenbank-Kompatibilität.")
+        notes.append(f"Ovid truncation '{txt}' requires manual verification against the target database.")
     return txt
 
 
@@ -242,9 +242,9 @@ def render(node: Node, target: str, notes: List[str]) -> str:
             return ("exp " if exploded else "") + label + "/" + subheading
         if target == "Elsevier Embase.com":
             if subheading:
-                notes.append(f"MeSH Qualifier '/{subheading}' wurde bei '{name}' nicht übertragen: kein verifiziertes Emtree-Äquivalent.")
+                notes.append(f"MeSH qualifier '/{subheading}' for '{name}' was not transferred: no verified Emtree equivalent.")
             return f"'{name.replace(chr(39), '')}'/{'exp' if exploded else 'de'}"
-        raise ParseError("Mapping nur für PsycINFO/Embase vorgesehen")
+        raise ParseError("Mappings only supported for PsycINFO/Embase")
     if node.kind == "field":
         inner = render(node.left, target, notes)
         if target == "Ovid PsycINFO":
@@ -258,7 +258,7 @@ def render(node: Node, target: str, notes: List[str]) -> str:
             fs = [x.strip().lower() for x in node.value.strip(".").split(",")]
             fs = ["kw" if f in ("kf", "id") else f for f in fs]
             if "tw" in fs or "mp" in fs or "pt" in fs:
-                notes.append(f"Feld {node.value} teilweise nicht exakt in Embase.com übertragen. Bitte Felddefinition prüfen.")
+                notes.append(f"Field {node.value} could not be translated exactly into Embase.com. Verify field definitions.")
                 fs = [x for x in fs if x not in ("tw", "mp", "pt")]
                 if not fs:
                     fs = ["ti", "ab", "kw"]
@@ -267,12 +267,12 @@ def render(node: Node, target: str, notes: List[str]) -> str:
                 inner = f"({inner})"
             return f"{inner}:{','.join(fs)}"
         if node.value.lower() not in (".ti,ab,kf.", ".ti,ab.", ".ti,ab,kw.", ".ti,ab,id."):
-            notes.append(f"Spezifische Feldbegrenzung {node.value} wurde in {target} zu einer allgemeinen Titel/Abstract/Keyword-Suche verbreitert.")
+            notes.append(f"Specific field restriction {node.value} was broadened to a general title/abstract/keyword search in {target}.")
         return inner
     if node.kind == "near":
         n = int(node.value[3:])
         if n < 1:
-            raise ParseError("Ovid ADJ muss mindestens 1 sein.")
+            raise ParseError("Ovid ADJ must be at least 1.")
         op = node.value
         if target == "Elsevier Embase.com":
             op = f"NEAR/{n}"
@@ -280,7 +280,7 @@ def render(node: Node, target: str, notes: List[str]) -> str:
             op = f"NEAR/{n-1}"
         elif target == "Scopus":
             if n == 1:
-                notes.append("ADJ1 erfordert unmittelbare Nachbarschaft. W/0 in Scopus bitte vor dem Suchen prüfen.")
+                notes.append("ADJ1 requires immediate adjacency. Verify Scopus W/0 before searching.")
             op = f"W/{n-1}"
         return f"({render(node.left,target,notes)} {op} {render(node.right,target,notes)})"
     if node.kind == "bool":
@@ -297,14 +297,14 @@ def render(node: Node, target: str, notes: List[str]) -> str:
             collect(node)
             return "(" + f" {op} ".join(terms) + ")"
         return f"({render(node.left, target, notes)} {op} {render(node.right, target, notes)})"
-    raise ParseError(f"Unbekannter Knotentyp: {node.kind}")
+    raise ParseError(f"Unknown node type: {node.kind}")
 
 
 def translate(source: str, mappings: Optional[Dict[str, Dict[str, str]]] = None) -> dict:
     """Return per-database query and warnings. No network calls or LLMs."""
     tree = parse_ovid(source)
     mapping_sets = mappings or {}
-    outputs: Dict[str, dict] = {"Ovid MEDLINE": {"query": source.strip(), "removed": [], "unverified": [], "notes": ["Originale Ovid-MEDLINE-Strategie."]}}
+    outputs: Dict[str, dict] = {"Ovid MEDLINE": {"query": source.strip(), "removed": [], "unverified": [], "notes": ["Original Ovid MEDLINE strategy."]}}
     for target in _TARGETS:
         notes: List[str] = []
         removed: List[str] = []
@@ -313,7 +313,7 @@ def translate(source: str, mappings: Optional[Dict[str, Dict[str, str]]] = None)
         reduced = simplify(tree, target, manual, notes, removed, unverified)
         if reduced is None:
             result = ""
-            notes.append("Kein Freitext nach Entfernung der kontrollierten Descriptors übrig.")
+            notes.append("No free text remains after removing controlled descriptors.")
         else:
             result = render(reduced, target, notes)
             if target == "Web of Science":
@@ -321,12 +321,12 @@ def translate(source: str, mappings: Optional[Dict[str, Dict[str, str]]] = None)
             elif target == "Scopus":
                 result = f"TITLE-ABS-KEY({result})"
         if removed:
-            notes.insert(0, f"{len(removed)} kontrollierte Heading-Klausel(n) entfernt (nicht als Freitext ersetzt).")
-            notes.append("Die Trefferzahl kann abweichen, weil indexierungsbasierte Treffer entfallen.")
+            notes.insert(0, f"{len(removed)} controlled subject-heading clause(s) removed (not substituted with free text).")
+            notes.append("Hit counts may differ because indexed-heading hits are lost.")
         if unverified:
             if target == "Ovid PsycINFO":
-                notes.insert(0, f"{len(unverified)} MeSH-Heading(s) als PROVISORISCHE Ovid-PsycINFO-Headings erhalten. APA-Thesaurus-Begriffe, Explosion und Qualifier müssen geprüft werden; nicht als validierte Suche verwenden.")
+                notes.insert(0, f"{len(unverified)} MeSH heading(s) retained as UNVERIFIED Ovid PsycINFO heading candidates. Check APA thesaurus terms, explosion and qualifiers; do not treat as a validated search.")
             else:
-                notes.insert(0, f"{len(unverified)} MeSH-Heading(s) als Freitext-Fallback (:ti,ab,kw) erhalten. Dies ist KEINE Emtree-Übersetzung; indexierungsbasierte Treffer können fehlen. Emtree-Mapping erforderlich.")
+                notes.insert(0, f"{len(unverified)} MeSH heading(s) retained as free-text fallback (:ti,ab,kw). This is NOT an Emtree translation; indexed hits may be missed. Verified Emtree mapping is required.")
         outputs[target] = {"query": result, "removed": list(dict.fromkeys(removed)), "unverified": list(dict.fromkeys(unverified)), "notes": list(dict.fromkeys(notes))}
     return outputs

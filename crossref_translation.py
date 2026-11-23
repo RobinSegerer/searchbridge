@@ -152,37 +152,37 @@ def translate_crossref(source: str) -> dict:
     lost = []
     for node in _walk(tree):
         if node.kind == "near":
-            lost.append(f"{node.value}: kein Proximity-Operator.")
+            lost.append(f"{node.value}: no proximity operator.")
         if node.kind == "bool":
-            lost.append(f"{node.value}: Boolesche Operation nicht verfügbar.")
+            lost.append(f"{node.value}: Boolean operation not available.")
         if node.kind == "heading":
-            lost.append(f"{node.value}: MeSH-Indexierung/Explosion entfällt.")
+            lost.append(f"{node.value}: MeSH indexing/explosion is unavailable.")
         if node.kind == "field":
-            lost.append(f"{node.value}: Ovid-Feldbegrenzung nicht verfügbar.")
+            lost.append(f"{node.value}: Ovid field restriction is unavailable.")
     notes = [
-        "Nur explorative bibliografische Suche: KEINE Boolesche oder "
-        "retrieval-äquivalente Übersetzung.",
-        "Crossref query.bibliographic verlangt mindestens ca. 20% der "
-        "Suchwörter; ein langer OR-Synonymstring kann relevante "
-        "Publikationen systematisch verlieren.",
-        "Die kombinierte Suche enthält automatisch den ersten "
-        "lexikalischen Anker je oberstem AND-Themenblock (maximal "
-        f"{MAX_ANCHOR_WORDS} Wörter). Das ist eine illustrative Vorauswahl, "
-        "keine validierte fachliche Auswahl.",
-        f"Ursprünglich {len(source_terms)} verschiedene positive "
-        f"Begriffskandidaten, davon {len(anchors)} Themenblock-Anker. "
-        "Alle vollständigen Begriffskandidaten sind im Export enthalten.",
-        "Bei Crossref dürfen Suchergebnisse nicht als vollständige "
-        "systematische Recherchemengen interpretiert werden.",
+        "Exploratory bibliographic search only: NOT a Boolean or "
+        "retrieval-equivalent translation.",
+        "Crossref query.bibliographic requires around 20% of the "
+        "query terms to match; a long OR synonym string can systematically "
+        "miss relevant publications.",
+        "The combined search automatically uses the first "
+        "lexical anchor from each top-level AND topic block (up to "
+        f"{MAX_ANCHOR_WORDS} words). This is an illustrative selection, "
+        "not a validated expert selection.",
+        f"Originally {len(source_terms)} distinct positive "
+        f"term candidates, including {len(anchors)} topic-block anchors. "
+        "All original term candidates are included in the export.",
+        "Crossref search results must not be treated as complete "
+        "systematic search result sets.",
     ]
     if len(snippets) < len(anchors):
-        notes.append("Einige Themenblock-Anker wurden wegen des "
-                     "10-Wort-Limits nicht in die kombinierte Suche übernommen.")
+        notes.append("Some topic-block anchors were omitted due to the "
+                     "10-word limit of the combined search.")
     if excluded:
         notes.append(
-            f"{len(excluded)} ausgeschlossene Begriffe (NOT-Zweig) können "
-            "nicht ausgeschlossen werden und sind NICHT Bestandteil "
-            "der Crossref-Abfrage."
+            f"{len(excluded)} excluded terms (NOT branch) cannot be "
+            "excluded and are NOT part "
+            "of the Crossref query."
         )
     return {
         "query": combined,

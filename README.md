@@ -31,7 +31,7 @@ SearchBridge is a Streamlit application for rule-based search strategy translati
    OpenAlex requires a key for pagination after the first 100 hits;
    Scopus requires a key with appropriate institution permissions. For
    unsupported sources, upload RIS files.
-4. Click **Datenbanken abfragen und zusammenführen**. Follow the two
+4. Click **Search databases and merge records**. Follow the two
    progress indicators for each source and the subsequent three deduplication
    stages. Inspect the source completeness report and fuzzy duplicate
    candidates requiring manual review. The app uses its clearly named
@@ -48,6 +48,24 @@ SearchBridge is a Streamlit application for rule-based search strategy translati
 7. Download the ZIP audit bundle before ending the Streamlit session.
    **Session state is not a durable database** and does not substitute
    for Covidence/Rayyan/ASReview or project storage.
+
+### Screening metadata and English-language interface
+
+The Streamlit interface, search translation warnings, retrieval diagnostics,
+term harvesting controls, and review workflow labels are in English.
+
+Every review table uses the same bibliographic fields: **Title, Abstract,
+Authors, Year, Journal, DOI, Database**. The Database field preserves all
+source databases for records merged during deduplication (including RIS
+source filenames). The human screening detail view displays the full abstract
+and the same citation metadata.
+
+The **Screening results: CSV** download includes these fields alongside
+AI suggestions, evidence, uncertainty, human decisions, reasons, and reviewer
+information. The ZIP also contains self-contained `screening_results.csv`,
+`ai_screening_suggestions.csv`, and `human_decisions.csv` tables in addition
+to deduplicated RIS/JSON and the audit log. Missing metadata remain empty
+rather than being invented.
 
 ### What is and is not complete
 
