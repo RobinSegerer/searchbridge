@@ -20,12 +20,15 @@ jobs:
         run: |
           python - <<'PY'
           from mesh_expansion import ExplodedHeading, expand_mesh_heading
-          result = expand_mesh_heading(ExplodedHeading("Social Media"))
-          print("NLM descriptor:", result.resolved_name, result.mesh_id)
-          print("Root trees:", result.root_trees)
-          print("Distinct children:", result.children_count)
-          for row in result.positions[:12]:
-              print(row.level, row.descriptor, row.tree_number, row.mesh_id)
-          assert result.mesh_id.startswith("D")
-          assert result.descriptor_count >= 1
+          for name in ("Students", "Self Concept", "Education", "Social Media"):
+              result = expand_mesh_heading(ExplodedHeading(name))
+              print("NLM descriptor:", result.resolved_name, result.mesh_id)
+              print("Root trees:", result.root_trees)
+              print("Distinct children:", result.children_count)
+              for row in result.positions[:12]:
+                  print(row.level, row.descriptor, row.tree_number, row.mesh_id)
+              assert result.mesh_id.startswith("D")
+              assert result.descriptor_count >= 1
+              if name == "Students":
+                  assert result.children_count > 0, "Expected narrower MeSH descriptors under Students"
           PY
