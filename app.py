@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 import streamlit as st
 import requests
+from urllib.parse import urlencode
 
 from translator_core import translate, ParseError
 from external_translation import translate_external
@@ -233,6 +234,106 @@ with translate_tab:
                         st.link_button("Crossref API-Abfrage öffnen", item["url"])
                     elif name == "Semantic Scholar":
                         st.link_button("Semantic Scholar Bulk-API-Abfrage öffnen", item["url"])
+                if name == "Crossref" and item.get("anchors"):
+                    st.warning(
+                        "Crossref hat keine Boolesche Abfragesprache. Diese "
+                        "Suchanker sind explorative Metadaten-Suchen und keine "
+                        "äquivalente Übersetzung deiner Strategie."
+                    )
+                    with st.expander(
+                        "Crossref-Suchanker je Themenblock und vollständige "
+                        "Begriffsliste", expanded=True):
+                        for anchor in item["anchors"]:
+                            st.markdown(
+                                f"**Themenblock {anchor['block']}:** "
+                                f"\`{anchor['query']}\`"
+                            )
+                            st.link_button(
+                                f"Crossref: Block {anchor['block']} durchsuchen",
+                                anchor["url"])
+                        st.caption(
+                            f"Quellstrategie: {item.get('source_term_count', 0)} "
+                            "unterschiedliche positive Begriffskandidaten; "
+                            "die Reihenfolge und die erste Nähepaarung bestimmen "
+                            "die automatisch gewählten Anker. Bitte fachlich prüfen."
+                        )
+                        st.write(item.get("source_terms", []))
+                        if item.get("excluded_not_terms"):
+                            st.warning(
+                                "Ausgeschlossene NOT-Begriffe können nicht "
+                                "durch Crossref ausgeschlossen werden."
+                            )
+                            st.write(item["excluded_not_terms"])
+                    custom_crossref = st.text_input(
+                        "Crossref-Bibliografie-Suche manuell anpassen",
+                        value=item["query"],
+                        key="crossref_custom_probe")
+                    if custom_crossref.strip():
+                        custom_url = ("https://api.crossref.org/works?"
+                                      + urlencode({
+                                          "query.bibliographic": custom_crossref.strip(),
+                                          "rows": 20,
+                                          "select": "DOI,title,score,type,published",
+                                      }))
+                        st.link_button("Angepasste Crossref-Abfrage öffnen",
+                                       custom_url)
+                if name == "Semantic Scholar":
+                    st.caption(
+                        "Diese Suche gilt nur für die Academic Graph Bulk API. "
+                        "Die Websuche und /paper/search unterstützen sie nicht."
+                    )
+                    if item.get("url"):
+                        with st.expander("Semantic-Scholar-API-Key und Live-Prüfung"):
+                            s2_key = st.text_input(
+                                "Semantic Scholar API-Key (optional)",
+                                type="password", key="s2_search_key")
+                            if st.button("Bulk-Suchabfrage live überprüfen",
+                                         key="test_s2_search"):
+                                try:
+                                    response = requests.get(
+                                        item["url"], timeout=35,
+                                        headers=(
+                                            {"x-api-key": s2_key.strip()}
+                                            if s2_key.strip() else {}
+                                        ))
+                                    if response.ok:
+                                        payload = response.json()
+                                        st.success(
+                                            "Semantic Scholar Bulk hat die "
+                                            "Abfrage angenommen (HTTP 200)."
+                                        )
+                                        st.caption(
+                                            f"Geschätzte Gesamttreffer: "
+                                            f"{payload.get('total', 'nicht verfügbar')} · "
+                                            f"Datensätze auf dieser Seite: "
+                                            f"{len(payload.get('data') or [])}"
+                                        )
+                                        st.caption(
+                                            "HTTP 200 bestätigt keine Äquivalenz "
+                                            "zur Ovid-MEDLINE-Strategie."
+                                        )
+                                    elif response.status_code == 429:
+                                        st.warning(
+                                            "HTTP 429 – S2-Anfragelimit. "
+                                            "Die Syntax konnte nicht live "
+                                            "bestätigt werden; bitte mit "
+                                            "eigenem API-Key erneut prüfen."
+                                        )
+                                    else:
+                                        st.error(
+                                            f"Semantic Scholar meldet HTTP "
+                                            f"{response.status_code}: "
+                                            f"{response.text[:500]}"
+                                        )
+                                except (requests.RequestException, ValueError) as exc:
+                                    st.error(f"S2 Live-Test fehlgeschlagen: {exc}")
+                    else:
+                        st.error(
+                            "Die API-URL ist zu lang. Diese vollständige Suche "
+                            "kann nicht als einzelner S2-Bulk-GET-Aufruf "
+                            "ausgeführt werden. Suchblöcke aufteilen und "
+                            "die Resultate anhand der Identifier zusammenführen."
+                        )
                 for note in item["notes"]:
                     if ("PROVISORISCHE" in note or "KEINE Emtree" in note or
                             "kontrollierte Heading-Klausel(n) entfernt" in note):
@@ -500,10 +601,17 @@ with help_tab:
       pair combinations. Long strategies use a downloadable POST JSON request;
       use the syntax-validation button to check them with OpenAlex's parser.
       Textual searches and MeSH indexing are not equivalent.
-    - The Semantic Scholar tab uses the Graph /paper/search/bulk endpoint with
-      +(AND), |(OR) and -(NOT), not the relevance search or website syntax.
-    - Crossref returns only a bibliographic relevance query with a prominent
-      warning: the API does NOT support Ovid Boolean operators.
+    - The Semantic Scholar tab uses the Graph /paper/search/bulk endpoint,
+      compact +(...)/-()/OR grouping, and explicit loss warnings for adjN,
+      Ovid fields, wildcard approximations. With a Semantic Scholar API key,
+      the request can be tested directly; anonymous requests often get 429.
+      This grammar does not work on the website or /paper/search.
+    - Crossref does NOT support Boolean queries. Instead of concatenating all
+      synonyms, the converter now produces short discovery probes: one anchor
+      per top-level AND topic block plus a short combined query. The full
+      original term inventory is preserved, with a manual-edit field. These
+      searches are explorative bibliographic matches, NOT systematic search
+      equivalents; Crossref requires roughly 20% matching query words.
     - Previously loaded MeSH EXP descendants can optionally be added as
       labelled free-text candidate phrases for OpenAlex/Semantic Scholar.
       Unverified MeSH-to-Emtree mappings are not invented.
