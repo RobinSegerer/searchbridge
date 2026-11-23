@@ -226,3 +226,38 @@ def compare_top_k(
         "New terms": sorted(revised - original),
         "Dropped terms": sorted(original - revised),
     }
+
+
+def annotate_seed_presence(
+    ranked_rows: list[dict],
+    seed_records: list[Any],
+) -> list[dict]:
+    """Annotate exact word/phrase presence in seed titles or abstracts.
+
+    This is *not* a PubMed retrieval test: title/abstract occurrence is a
+    descriptive signal, not proof that adding a term recovers a seed PMID.
+    """
+    from term_harvesting import word_tokens
+
+    seed_fields = [
+        (word_tokens(r.title), word_tokens(r.abstract))
+        for r in seed_records
+    ]
+
+    def contains(field: list[str], target: list[str]) -> bool:
+        size = len(target)
+        return any(field[i:i + size] == target
+                   for i in range(len(field) - size + 1))
+
+    result = []
+    for item in ranked_rows:
+        terms = word_tokens(str(item["Title term"]))
+        hits = sum(
+            bool(terms) and (contains(title, terms) or contains(abstract, terms))
+            for title, abstract in seed_fields
+        )
+        row = dict(item)
+        row["Seed records containing term"] = hits
+        row["% seed records"] = round(100 * hits / len(seed_records), 2) if seed_records else 0
+        result.append(row)
+    return result
