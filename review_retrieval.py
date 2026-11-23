@@ -18,7 +18,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from pubmed_proximity import fetch_pubmed_candidates
+from pubmed_proximity import PubMedError, fetch_pubmed_candidates
 from review_core import (
     ReviewRecord, from_openalex_results, from_scopus_results, from_ris
 )
@@ -53,9 +53,13 @@ def _http() -> requests.Session:
 def pubmed_search(query: str, limit: int, *, email: str = "",
                   api_key: str = "",
                   progress: Callable[[int, int], None] | None = None) -> SourceResult:
-    r = fetch_pubmed_candidates(
-        query, limit=limit, email=email, api_key=api_key, progress=progress
-    )
+    try:
+        r = fetch_pubmed_candidates(
+            query, limit=limit, email=email, api_key=api_key,
+            progress=progress
+        )
+    except PubMedError as exc:
+        raise RetrievalError(f"PubMed-Abruf fehlgeschlagen: {exc}") from exc
     records = from_ris(r.records, "PubMed")
     return SourceResult(
         "PubMed", records, r.candidate_count, query,
