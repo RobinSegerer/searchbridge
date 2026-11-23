@@ -157,6 +157,20 @@ def screen_one(
         decision["decision"] = "manual_review"
         decision["reason"] = "Model returned no rationale."
         decision["uncertainty"] = "high"
+    elif decision["decision"] in ("include", "exclude"):
+        # Require direct, verbatim lexical evidence before even showing a
+        # model recommendation. Never trust a fabricated quotation.
+        evidence = decision["evidence"].strip()
+        source_text = record.title + " " + record.abstract
+        if not evidence or evidence.casefold() not in source_text.casefold():
+            decision["decision"] = "manual_review"
+            decision["reason"] = (
+                "The model did not quote verifiable title/abstract evidence. "
+                "Human review is required. Prior rationale: "
+                + decision["reason"][:320]
+            )
+            decision["uncertainty"] = "high"
+            decision["evidence"] = ""
     decision["model"] = model
     decision["origin"] = "openai_structured_suggestion"
     return decision
