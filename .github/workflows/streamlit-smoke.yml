@@ -5,6 +5,11 @@ on:
   push:
     paths:
       - .github/workflows/streamlit-smoke.yml
+      - app.py
+      - review_pipeline_ui.py
+      - review_retrieval.py
+      - review_core.py
+      - openai_review_screening.py
 
 jobs:
   streamlit:
