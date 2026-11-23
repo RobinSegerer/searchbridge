@@ -1,0 +1,45 @@
+name: Live sentence-embedding smoke test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/semantic-live-smoke.yml
+
+jobs:
+  embedding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ONNX embedding runtime
+        run: python -m pip install fastembed==0.9.1
+      - name: Load real MiniLM model and rank candidate terms
+        run: |
+          python - <<'PY'
+          from semantic_ranking import load_fastembed_model, rerank_title_terms
+          model = load_fastembed_model()
+          rows = [
+              {"Rank": 1, "Title term": "university students",
+               "Mean TF-IDF": 0.15, "Document frequency": 30, "% titles": 30.0, "Occurrences": 35},
+              {"Rank": 2, "Title term": "academic performance",
+               "Mean TF-IDF": 0.12, "Document frequency": 20, "% titles": 20.0, "Occurrences": 23},
+              {"Rank": 3, "Title term": "academic self concept",
+               "Mean TF-IDF": 0.08, "Document frequency": 13, "% titles": 13.0, "Occurrences": 15},
+              {"Rank": 4, "Title term": "scholastic self perception",
+               "Mean TF-IDF": 0.04, "Document frequency": 4, "% titles": 4.0, "Occurrences": 4},
+          ]
+          for mode in ("semantic", "hybrid"):
+              result = rerank_title_terms(
+                  rows,
+                  focus="academic self concept in university students",
+                  encoder=model, mode=mode, top_n=4,
+                  diversify=True,
+              )
+              assert len(result) == 4
+              assert all(-1.00001 <= r["Semantic similarity"] <= 1.00001 for r in result)
+              print(mode, [(r["Title term"], r["Semantic similarity"]) for r in result])
+          PY
