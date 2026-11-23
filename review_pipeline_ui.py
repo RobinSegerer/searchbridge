@@ -359,7 +359,9 @@ def render() -> None:
             "Rank": r.rank_score, "Abstract present": bool(r.abstract),
             "AI suggestion": choice.get("decision", ""),
             "AI reason": choice.get("reason", ""),
-            "Human decision": human.get(r.uid, "not_reviewed"),
+            "Human decision": (human.get(r.uid, {}).get("decision", "not_reviewed")
+                               if isinstance(human.get(r.uid), dict)
+                               else human.get(r.uid, "not_reviewed")),
         })
     st.dataframe(items, hide_index=True, use_container_width=True)
     if len(ordered) > 300:
@@ -467,41 +469,140 @@ def render() -> None:
                 for r in ordered if r.uid in ai
             ], hide_index=True, use_container_width=True)
 
-    st.markdown("#### 5 · Menschliche Entscheidungen")
+    st.markdown("#### 5 · Menschliches Titel-/Abstract-Screening")
     st.caption(
-        "Finale Einschluss-/Ausschlussentscheidungen werden separat "
-        "gespeichert. KI-Vorschläge werden niemals automatisch übernommen. "
-        "Diese erste Version unterstützt bis zu 100 manuelle "
-        "Entscheidungen in der interaktiven Vorschau."
+        "Jede finale Entscheidung erfolgt anhand des angezeigten Titels "
+        "und des vollständigen Abstracts. Die OpenAI-Einschätzung ist "
+        "nur eine unabhängige Empfehlung, keine vorgewählte Entscheidung."
     )
-    edited = st.data_editor(
-        [
-            {"uid": r.uid, "Title": r.title[:170],
-             "Human decision": human.get(r.uid, "not_reviewed")}
-            for r in ordered[:100]
-        ],
-        hide_index=True, use_container_width=True,
-        key="review_human_editor",
-        disabled=["uid", "Title"],
-        column_config={
-            "Human decision": st.column_config.SelectboxColumn(
-                "Human decision",
-                options=["not_reviewed", "include", "exclude", "manual_review"],
-                required=True
+    def _human_label(uid):
+        state = human.get(uid, "not_reviewed")
+        return state.get("decision", "not_reviewed") if isinstance(state, dict) else state
+
+    total_done = sum(_human_label(r.uid) != "not_reviewed" for r in ordered)
+    st.progress(total_done / len(ordered), text=(
+        f"{total_done:,} / {len(ordered):,} manuell gescreent"
+    ))
+    only_pending = st.checkbox(
+        "Nur noch nicht gescreente Studien anzeigen",
+        value=True, key="review_only_pending")
+    pool = [r for r in ordered if not only_pending or
+            _human_label(r.uid) == "not_reviewed"]
+    if not pool:
+        st.success("Alle verfügbaren Studien sind manuell bewertet.")
+        st.caption("Häkchen bei 'nur noch nicht gescreente' entfernen, "
+                   "um abgeschlossene Entscheidungen erneut zu prüfen.")
+    else:
+        options_by_uid = {r.uid: r for r in pool}
+        selected_uid = st.selectbox(
+            "Studie zur menschlichen Prüfung auswählen",
+            options=list(options_by_uid),
+            format_func=lambda uid: (
+                f"{next((i + 1 for i, r in enumerate(ordered) if r.uid == uid), '?')}"
+                f" · {options_by_uid[uid].title[:110]}"
+                + (" · Abstract fehlt" if not options_by_uid[uid].abstract else "")
             ),
-        },
-    )
-    if st.button("Menschliche Entscheidungen speichern",
-                 key="review_save_human"):
-        for row in edited:
-            if row["Human decision"] != "not_reviewed":
-                st.session_state.review_human[row["uid"]] = row["Human decision"]
-            else:
-                st.session_state.review_human.pop(row["uid"], None)
-        st.success(
-            f"{len(st.session_state.review_human)} menschliche "
-            "Entscheidungen gespeichert."
+            key="review_selected_uid",
         )
+        selected = options_by_uid[selected_uid]
+        st.markdown("##### " + selected.title)
+        st.caption(
+            f"Jahr: {selected.year or 'unbekannt'} · DOI: "
+            f"{selected.doi or 'nicht vorhanden'} · PMID: "
+            f"{selected.pmid or 'nicht vorhanden'}"
+        )
+        st.caption(
+            "Quelle(n): " + ", ".join(selected.sources)
+            + " · Rank: " + str(selected.rank_score)
+        )
+        st.markdown("**Abstract (vollständig)**")
+        if selected.abstract:
+            st.markdown(selected.abstract)
+        else:
+            st.warning(
+                "Kein Abstract vorhanden. Ohne zusätzliche Information "
+                "ist die Eignung häufig nicht entscheidbar. "
+                "Bitte das Original prüfen und gegebenenfalls "
+                "'Manual Review' auswählen."
+            )
+        suggestion = ai.get(selected_uid)
+        if suggestion:
+            with st.expander("OpenAI-Vorschlag – nicht bindend", expanded=True):
+                st.markdown(
+                    "**Vorschlag:** " + suggestion.get("decision", "unbekannt")
+                    + " · **Unsicherheit:** "
+                    + suggestion.get("uncertainty", "unbekannt")
+                )
+                st.markdown("**Modellbegründung:** "
+                            + suggestion.get("reason", ""))
+                if suggestion.get("evidence"):
+                    st.markdown("**Beleg im Artikeltext:** "
+                                + suggestion["evidence"])
+                st.caption("Modell: " + suggestion.get("model", ""))
+        state = human.get(selected_uid, {})
+        previous = (state.get("decision", "not_reviewed")
+                    if isinstance(state, dict) else state)
+        previous_reason = state.get("reason", "") if isinstance(state, dict) else ""
+        previous_reviewer = state.get("reviewer", "") if isinstance(state, dict) else ""
+        decisions = ["not_reviewed", "include", "exclude", "manual_review"]
+        with st.form("review_human_full_abstract_form", clear_on_submit=False):
+            decision = st.radio(
+                "Deine unabhängige finale Titel-/Abstract-Entscheidung",
+                options=decisions,
+                index=decisions.index(previous) if previous in decisions else 0,
+                horizontal=True,
+                key=f"review_human_choice_{selected_uid}",
+            )
+            reason = st.text_area(
+                "Begründung für die Entscheidung",
+                value=previous_reason, height=85,
+                key=f"review_human_reason_{selected_uid}",
+                placeholder="Welches Einschluss- oder Ausschlusskriterium "
+                            "ist erfüllt beziehungsweise eindeutig verletzt?"
+            )
+            reviewer = st.text_input(
+                "Reviewer-Kürzel (optional)",
+                value=previous_reviewer,
+                key=f"review_human_reviewer_{selected_uid}",
+            )
+            save_human = st.form_submit_button(
+                "Menschliche Entscheidung speichern und weiter",
+                type="primary"
+            )
+        if save_human:
+            if decision == "exclude" and not reason.strip():
+                st.error(
+                    "Für einen Ausschluss muss ein verletztes "
+                    "Ausschluss-/Einschlusskriterium dokumentiert werden."
+                )
+            elif decision == "include" and not selected.abstract:
+                st.warning(
+                    "Kein Abstract vorhanden. Bitte Original und "
+                    "Volltext prüfen; vorläufig 'Manual Review' verwenden."
+                )
+            else:
+                if decision == "not_reviewed":
+                    human.pop(selected_uid, None)
+                else:
+                    human[selected_uid] = {
+                        "decision": decision,
+                        "reason": reason.strip(),
+                        "reviewer": reviewer.strip(),
+                        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                    }
+                st.success("Menschliche Entscheidung gespeichert.")
+                st.rerun()
+
+    with st.expander("Gespeicherte menschliche Entscheidungen"):
+        st.dataframe([
+            {"UID": r.uid, "Titel": r.title,
+             "Entscheidung": _human_label(r.uid),
+             "Begründung": (human.get(r.uid) or {}).get("reason", "")
+                           if isinstance(human.get(r.uid), dict) else "",
+             "Abstract vorhanden": bool(r.abstract),
+             "KI-Vorschlag": ai.get(r.uid, {}).get("decision", "")}
+            for r in ordered if _human_label(r.uid) != "not_reviewed"
+        ], hide_index=True, use_container_width=True)
 
     st.divider()
     st.markdown("#### 6 · Reproduzierbarer Export")
