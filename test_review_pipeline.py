@@ -12,7 +12,7 @@ from review_core import (
     ReviewRecord, from_openalex_results, from_scopus_results, from_ris,
     merge_records, lexical_rank, csv_bytes, ris_bytes, norm_doi,
 )
-from review_retrieval import openalex_search, scopus_search, RetrievalError
+from review_retrieval import openalex_search, scopus_search, pubmed_search, RetrievalError
 from openai_review_screening import (
     OpenAIScreenError, screen_one, screen_batch,
 )
@@ -76,6 +76,42 @@ class TestReviewCore(unittest.TestCase):
         self.assertEqual(len(m.records), 2)
         self.assertEqual(len(m.fuzzy_review), 1)
         self.assertEqual(m.fuzzy_review[0]["status"], "MANUAL REVIEW - NOT merged")
+
+    def test_dedup_reports_stage_progress_and_preserves_groups(self):
+        calls = []
+        source = [
+            make("PubMed", "1", "Social media use in college students",
+                 doi="10.1234/abc"),
+            make("OpenAlex", "2", "Social media use in college students",
+                 doi="10.1234/abc"),
+            make("Scopus", "3", "Completely different title on education",
+                 doi="10.5678/xyz"),
+        ]
+        out = merge_records(
+            source,
+            progress=lambda stage, done, total: calls.append(
+                (stage, done, total)),
+        )
+        self.assertEqual(out.duplicates_removed, 1)
+        for stage in (
+            "Identifier abgleichen",
+            "Metadaten zusammenführen",
+            "Ähnliche Titel prüfen",
+        ):
+            self.assertTrue(
+                any(name == stage and done == total for name, done, total in calls),
+                stage,
+            )
+        self.assertFalse(out.fuzzy_skipped)
+
+    def test_large_year_group_skipped_with_visible_metadata(self):
+        studies = [
+            make("RIS", str(n), f"Unique study title of adolescent behavior {n}")
+            for n in range(255)
+        ]
+        out = merge_records(studies)
+        self.assertEqual(len(out.records), len(studies))
+        self.assertEqual(out.fuzzy_skipped["2025"], 255)
 
     def test_ris_import_roundtrip_and_source(self):
         raw = b'TY  - JOUR\nTI  - Academic achievement and social media\nAB  - Observational analysis.\nDO  - 10.1000/abc\nPY  - 2022\nER  -\n'
@@ -163,6 +199,43 @@ class TestRetrieval(unittest.TestCase):
         with self.assertRaises(ValueError):
             openalex_search("get works about science", limit=101)
 
+    def test_pubmed_progress_forwarded_to_fetcher(self):
+        from types import SimpleNamespace
+
+        def fake_fetch(query, limit, email, api_key, progress):
+            progress(8, 20)
+            return SimpleNamespace(records=[], candidate_count=20)
+
+        observed = []
+        with patch("review_retrieval.fetch_pubmed_candidates",
+                   side_effect=fake_fetch):
+            out = pubmed_search(
+                "Students[mh]", limit=20,
+                progress=lambda done, total: observed.append((done, total)),
+            )
+        self.assertEqual(observed, [(8, 20)])
+        self.assertFalse(out.complete)
+
+    def test_openalex_page_count_progress(self):
+        class Session:
+            def post(self, *args, **kwargs):
+                return MockResponse({
+                    "meta": {"count": 5},
+                    "results": [
+                        {"id": "W1", "title": "Paper A"},
+                        {"id": "W2", "title": "Paper B"},
+                    ],
+                })
+
+        observed = []
+        with patch("review_retrieval._http", return_value=Session()):
+            out = openalex_search(
+                "get works about science", limit=2,
+                progress=lambda done, total: observed.append((done, total)),
+            )
+        self.assertEqual(len(out.records), 2)
+        self.assertEqual(observed, [(2, 2)])
+
     def test_scopus_key_and_metadata(self):
         with self.assertRaises(ValueError):
             scopus_search("TITLE(education)", limit=10, api_key="")
@@ -180,6 +253,29 @@ class TestRetrieval(unittest.TestCase):
         self.assertEqual(r.total, 1)
         self.assertEqual(len(r.records), 1)
         self.assertEqual(session.headers["X-ELS-APIKey"], "test-scopus-key")
+
+
+    def test_scopus_page_count_progress(self):
+        class Session:
+            def get(self, *args, **kwargs):
+                return MockResponse({
+                    "search-results": {
+                        "opensearch:totalResults": "1",
+                        "entry": [{
+                            "dc:identifier": "SCOPUS_ID:77",
+                            "dc:title": "Learning and attention",
+                        }],
+                    },
+                })
+
+        observed = []
+        with patch("review_retrieval._http", return_value=Session()):
+            result = scopus_search(
+                "TITLE(attention)", limit=3, api_key="test",
+                progress=lambda done, total: observed.append((done, total)),
+            )
+        self.assertEqual(result.total, 1)
+        self.assertEqual(observed, [(1, 1)])
 
 
 class TestOpenAIScreen(unittest.TestCase):
