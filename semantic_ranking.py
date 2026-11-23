@@ -85,6 +85,9 @@ def rerank_title_terms(
     top_n: int = 100,
     diversify: bool = False,
     diversity_weight: float = 0.15,
+    term_key: str = "Title term",
+    score_key: str = "Mean TF-IDF",
+    base_rank_label: str = "TF-IDF rank",
 ) -> list[dict]:
     """Rank a TF-IDF-derived candidate pool; no invented lexical candidates.
 
@@ -108,7 +111,7 @@ def rerank_title_terms(
     if not tfidf_rows:
         return []
 
-    terms = [str(row["Title term"]) for row in tfidf_rows]
+    terms = [str(row[term_key]) for row in tfidf_rows]
     if len(set(terms)) != len(terms):
         raise ValueError("Candidate list contains duplicate terms.")
 
@@ -139,7 +142,7 @@ def rerank_title_terms(
 
     # Re-rank the original TF-IDF rows by score, not their input order.
     tfidf_order = sorted(indices, key=lambda i: (
-        -float(tfidf_rows[i]["Mean TF-IDF"]), terms[i]))
+        -float(tfidf_rows[i][score_key]), terms[i]))
     tfidf_ranks = [0] * len(terms)
     for rank, ix in enumerate(tfidf_order, 1):
         tfidf_ranks[ix] = rank
@@ -155,7 +158,7 @@ def rerank_title_terms(
             for i in indices
         ]
     base_order = sorted(indices, key=lambda i: (
-        -combined[i], -similarity[i], -float(tfidf_rows[i]["Mean TF-IDF"]),
+        -combined[i], -similarity[i], -float(tfidf_rows[i][score_key]),
         terms[i]
     ))
     limit = min(top_n, len(terms))
@@ -194,19 +197,16 @@ def rerank_title_terms(
     results: list[dict] = []
     for rank, i in enumerate(final_order, 1):
         original = tfidf_rows[i]
-        results.append({
+        new_row = dict(original)
+        new_row.update({
             "Rank": rank,
-            "Title term": terms[i],
             "Semantic similarity": round(similarity[i], 6),
             "Semantic rank": semantic_ranks[i],
-            "TF-IDF rank": tfidf_ranks[i],
-            "Mean TF-IDF": original["Mean TF-IDF"],
-            "Document frequency": original["Document frequency"],
-            "% titles": original["% titles"],
-            "Occurrences": original["Occurrences"],
+            base_rank_label: tfidf_ranks[i],
             "Hybrid RRF": round(combined[i], 6) if mode == "hybrid" else "",
             "MMR score": round(mmr_scores[i], 6) if diversify else "",
         })
+        results.append(new_row)
     return results
 
 
@@ -214,12 +214,13 @@ def compare_top_k(
     tfidf_rows: list[dict],
     ranked_rows: list[dict],
     k: int = 20,
+    term_key: str = "Title term",
 ) -> dict:
     """Describe ranking overlap only, not unverified retrieval performance."""
     if k < 1:
         raise ValueError("k must be >= 1.")
-    original = {str(x["Title term"]) for x in tfidf_rows[:k]}
-    revised = {str(x["Title term"]) for x in ranked_rows[:k]}
+    original = {str(x[term_key]) for x in tfidf_rows[:k]}
+    revised = {str(x[term_key]) for x in ranked_rows[:k]}
     return {
         "Top K": k,
         "Shared terms": len(original & revised),
