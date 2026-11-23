@@ -7,6 +7,7 @@ import zipfile
 from datetime import datetime, timezone
 
 import streamlit as st
+import requests
 
 from translator_core import translate, ParseError
 from external_translation import translate_external
@@ -175,6 +176,45 @@ with translate_tab:
                     st.warning("Keine validierte 1:1-Übersetzung. Die API-Abfrage verändert die Suchsemantik; bitte alle Hinweise prüfen.")
                     st.caption(f"API-Endpunkt: {item['endpoint']} · Modus: {item['mode']}")
                 st.code(item["query"], language=None)
+                if name == "OpenAlex" and item.get("request_json"):
+                    if item.get("uses_post"):
+                        st.info(
+                            "Die vollständige OQL-Strategie ist für einen GET-Link zu lang. "
+                            "OpenAlex verwendet hierfür POST / mit dem JSON-Body unten. "
+                            "Es wurde kein Suchterm abgeschnitten."
+                        )
+                    else:
+                        st.caption("Die Abfrage kann direkt mit GET ausgeführt werden; "
+                                   "der identische OQL-Ausdruck ist auch als POST-JSON verfügbar.")
+                    with st.expander("OpenAlex POST-Request (JSON) und Syntaxvalidierung",
+                                     expanded=bool(item.get("uses_post"))):
+                        st.code(item["request_json"], language="json")
+                        st.download_button(
+                            "Vollständige OpenAlex-POST-Abfrage (JSON) herunterladen",
+                            item["request_json"].encode("utf-8"),
+                            "searchbridge_openalex_oql.json",
+                            "application/json", key="download_openalex_oql")
+                        if st.button(
+                            "OQL-Syntax mit OpenAlex prüfen (kostenlos)",
+                            key="validate_openalex_oql"):
+                            with st.spinner("OpenAlex OQL-Parser wird aufgerufen"):
+                                try:
+                                    response = requests.post(
+                                        "https://api.openalex.org/query",
+                                        json={"oql": item["query"]},
+                                        timeout=60)
+                                    response.raise_for_status()
+                                    validation = response.json().get("validation", {})
+                                    if validation.get("valid") is True:
+                                        st.success("OpenAlex bestätigt: OQL ist syntaktisch gültig.")
+                                        st.caption(
+                                            "Syntaxvalidität prüft nicht die Äquivalenz "
+                                            "zu MEDLINE oder den tatsächlichen Retrievalgewinn.")
+                                    else:
+                                        st.error("OpenAlex meldet Syntax- oder Validierungsprobleme.")
+                                        st.json(validation)
+                                except (requests.RequestException, ValueError) as exc:
+                                    st.error(f"OpenAlex-Syntaxvalidierung nicht verfügbar: {exc}")
                 if item.get("url"):
                     if name == "OpenAlex":
                         st.link_button("OpenAlex API-Abfrage öffnen", item["url"])
@@ -195,7 +235,7 @@ with translate_tab:
                     with st.expander(f"Unverified subject headings ({len(item['unverified'])})", expanded=not bool(item.get("mode"))):
                         st.write(item["unverified"])
                         st.caption("Verify descriptors against the target database thesaurus and provide confirmed mappings above.")
-                if item["removed"]:
+                if item["removed"] and not item.get("mode"):
                     with st.expander("Removed controlled descriptors"):
                         st.write(item["removed"])
         st.divider()
@@ -443,9 +483,12 @@ with help_tab:
     st.markdown("""
     ### How it works
     - The translator rewrites supported Ovid operators and field codes.
-    - The OpenAlex tab renders scoped Boolean queries with documented losses
-      for Ovid ADJ, MeSH headings and field differences. Wildcards use OpenAlex
-      exact search. The API's long-URL limit is checked.
+    - The OpenAlex tab now generates native **OQL proximity** rather than
+      replacing Ovid adjN with AND. adj2 maps to within 1 intervening word,
+      adj3 to within 2. OR word lists are distributed to full proximity
+      pair combinations. Long strategies use a downloadable POST JSON request;
+      use the syntax-validation button to check them with OpenAlex's parser.
+      Textual searches and MeSH indexing are not equivalent.
     - The Semantic Scholar tab uses the Graph /paper/search/bulk endpoint with
       +(AND), |(OR) and -(NOT), not the relevance search or website syntax.
     - Crossref returns only a bibliographic relevance query with a prominent
