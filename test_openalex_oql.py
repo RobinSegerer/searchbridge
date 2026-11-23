@@ -32,6 +32,14 @@ class OpenAlexOQLTests(unittest.TestCase):
         self.assertEqual(out["query"].count(" OR "),29)
         self.assertNotIn("((((((",out["query"])
 
+    def test_openalex_two_wildcard_minimum_prefix_rule(self):
+        q = '((Web* OR social) adj3 (platform* OR network*)).ti,ab,kf.'
+        out = translate_openalex_oql(q)
+        self.assertEqual(out["query"].count("within 2 words of each other"), 4)
+        self.assertIn('("Web" and "platform*" within 2 words of each other)', out["query"])
+        self.assertTrue(any("Web*" in loss and "enger" in loss for loss in out["removed"]))
+        self.assertFalse(out["validated_equivalence"])
+
     def test_heading_kept_as_unverified_freetext(self):
         out=translate_openalex_oql(
             '(exp Students/ OR exp "Self Concept"/px) AND social.ti,ab.',
