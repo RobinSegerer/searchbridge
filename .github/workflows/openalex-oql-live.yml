@@ -1,0 +1,42 @@
+name: Live OpenAlex OQL translator validation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/openalex-oql-live.yml
+
+jobs:
+  oql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install requests
+      - name: Validate native OQL with official OpenAlex parser
+        run: |
+          python - <<'PY'
+          import json
+          import requests
+          from openalex_oql import translate_openalex_oql
+
+          samples = {
+            "one proximity": '((College OR university) adj2 (student* OR graduate*)).ti,ab,kf.',
+            "multiple proximity": '(((College OR university) adj2 (student* OR graduate* OR undergraduate* OR postgraduate*)).ti,ab,kf. AND ((Online OR Digital OR social OR Web*) adj3 (Platform* OR network*)).ti,ab,kf.',
+            "heading and proximity": '((exp Students/ OR (young adj2 wom?n).ti,ab,kf.) AND (exp "Self Concept"/ OR social.ti,ab,kf.))',
+            "large POST": '((young OR juvenile) adj2 (' + " OR ".join("cognitive"+str(i)+"*" for i in range(170)) + ')).ti,ab,kf.',
+          }
+          for label, search in samples.items():
+              item = translate_openalex_oql(search)
+              r = requests.post("https://api.openalex.org/query",
+                                json={"oql": item["query"]}, timeout=60)
+              print("CASE", label, "HTTP", r.status_code,
+                    "OQL chars", len(item["query"]), "POST mode", item["uses_post"])
+              print("RESPONSE", r.text[:2500])
+              assert r.ok, label + " query parser error"
+              payload = r.json()
+              assert payload["validation"]["valid"] is True, label + " invalid: " + str(payload["validation"])
+          PY
