@@ -14,12 +14,12 @@ class ExternalTranslationTests(unittest.TestCase):
         s2 = result["Semantic Scholar"]
         cr = result["Crossref"]
         self.assertEqual(len(result), 3)
-        self.assertIn("search.title_abstract_keywords.exact=", oa["endpoint"])
+        self.assertIn("OQL", oa["endpoint"])
         self.assertIn("young", oa["query"])
         self.assertIn("AND", oa["query"])
-        self.assertNotIn("ADJ2", oa["query"])
+        self.assertIn("within 1 words of each other", oa["query"])
         self.assertIn("exp Students/", oa["unverified"])
-        self.assertTrue(any("ADJ2" in x for x in oa["removed"]))
+        self.assertTrue(any("ADJ2" in x for x in oa["notes"]))
         self.assertIn("bulk", s2["endpoint"])
         self.assertIn("+((", s2["query"])
         self.assertIn(" | ", s2["query"])
@@ -37,15 +37,14 @@ class ExternalTranslationTests(unittest.TestCase):
         q = '(mental OR health).ti.'
         result = translate_external(q)
         oa = result["OpenAlex"]
-        self.assertEqual(oa["endpoint"], "GET /works?search.title=")
+        self.assertEqual(oa["endpoint"], "GET /?oql= (OQL)")
         parsed = parse_qs(urlparse(oa["url"]).query)
-        self.assertEqual(parsed["search.title"][0], "(mental OR health)")
-        self.assertNotIn("exact", oa["endpoint"])
+        self.assertEqual(parsed["oql"][0], "get works where title has (mental OR health)")
 
     def test_mixed_fields_warns_and_broadens(self):
         q = '(education.ti. AND student*.ti,ab,kf.)'
         oa = translate_external(q)["OpenAlex"]
-        self.assertIn("search.title_abstract_keywords.exact", oa["endpoint"])
+        self.assertIn("OQL", oa["endpoint"])
         self.assertTrue(any("Gemischte" in x for x in oa["notes"]))
 
     def test_me_sh_expansion_is_just_free_text(self):
@@ -96,7 +95,8 @@ class ExternalTranslationTests(unittest.TestCase):
         result = translate_external(q)
         oa = result["OpenAlex"]
         self.assertEqual(oa["url"], "")
-        self.assertTrue(any("8'190" in x for x in oa["notes"]))
+        self.assertTrue(oa["uses_post"])
+        self.assertTrue(any("POST" in x for x in oa["notes"]))
 
     def test_existing_complex_query_support(self):
         q = """(((College or university) adj2 (student* or graduate* or undergraduate* or postgraduate*)).ti,ab,kf. or ((young adj2 (adult* or person* or individual* or people or population* or man or men or wom?n)).ti,ab,kf. or young adult/ or exp Students/))
@@ -109,10 +109,11 @@ And
         self.assertEqual(len(result["OpenAlex"]["unverified"]), 15)
         self.assertEqual(len(result["Semantic Scholar"]["unverified"]), 15)
         self.assertIn("Wom", result["OpenAlex"]["query"].title())
-        self.assertTrue(result["OpenAlex"]["url"].startswith("https://"))
+        self.assertTrue(result["OpenAlex"]["request_json"].startswith("{"))
+        self.assertTrue(result["OpenAlex"]["proximity_preserved"])
         self.assertGreater(len(result["Crossref"]["query"]), 300)
         self.assertIn("student*", result["Semantic Scholar"]["query"])
-        self.assertTrue(any("ADJ" in x for x in result["OpenAlex"]["removed"]))
+        self.assertTrue(any("ADJ" in x for x in result["OpenAlex"]["notes"]))
 
 
 if __name__ == "__main__":
