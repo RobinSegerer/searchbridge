@@ -169,15 +169,14 @@ def rerank_title_terms(
         final_order = []
         available = set(indices)
         mmr_scores = {}
-        for rank in range(limit):
+        # Maintain incremental redundancy; O(n*k*d) rather than O(n*k^2*d).
+        max_redundancy = [0.0] * len(terms)
+        for _ in range(limit):
             best_ix = None
             best_val = float("-inf")
             for i in available:
-                redundancy = max(
-                    [max(0.0, _dot(term_vectors[i], term_vectors[j]))
-                     for j in final_order], default=0.0
-                )
-                val = (1 - diversity_weight) * combined[i] - diversity_weight * redundancy
+                val = ((1 - diversity_weight) * combined[i]
+                       - diversity_weight * max_redundancy[i])
                 if best_ix is None or val > best_val or (
                     val == best_val and terms[i] < terms[best_ix]
                 ):
@@ -186,6 +185,11 @@ def rerank_title_terms(
             final_order.append(best_ix)
             mmr_scores[best_ix] = best_val
             available.remove(best_ix)
+            for i in available:
+                max_redundancy[i] = max(
+                    max_redundancy[i],
+                    max(0.0, _dot(term_vectors[i], term_vectors[best_ix]))
+                )
 
     results: list[dict] = []
     for rank, i in enumerate(final_order, 1):
