@@ -25,7 +25,8 @@ from review_core import (
 from review_retrieval import (
     RetrievalError, pubmed_search, openalex_search, scopus_search,
 )
-from openai_review_screening import screen_batch
+from openai_review_screening import screen_batch, DEFAULT_MODEL, SCREENING_MODELS
+from asysd_bridge import asysd_csv, asysd_available, run_asysd, ASySDError, BRIDGE_SCRIPT
 
 
 def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
@@ -37,6 +38,7 @@ def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
         audit = {
             "created_utc": datetime.now(timezone.utc).isoformat(),
             "raw_input": merge.input_count,
+            "deduplication_engine": search_log[-1].get("dedup_engine", "Python DOI/PMID/title-year") if search_log else "unknown",
             "deduplicated": len(ordered),
             "duplicate_records_removed": merge.duplicates_removed,
             "per_source_counts": merge.counts,
@@ -54,8 +56,12 @@ def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
         z.writestr("fuzzy_candidates_manual_review.csv",
                    _dict_csv(merge.fuzzy_review))
         z.writestr("human_decisions.csv", _dict_csv([
-            {"uid": k, "human_decision": v}
-            for k, v in overrides.items()
+            {"uid": uid,
+             "human_decision": info["decision"] if isinstance(info, dict) else info,
+             "human_reason": info.get("reason", "") if isinstance(info, dict) else "",
+             "reviewer": info.get("reviewer", "") if isinstance(info, dict) else "",
+             "decision_time_utc": info.get("timestamp_utc", "") if isinstance(info, dict) else ""}
+            for uid, info in overrides.items()
         ]))
         if ai:
             z.writestr("ai_screening_suggestions.json",
@@ -136,6 +142,21 @@ def render() -> None:
              "klicke anschliessend auf den Abruf-Button."
     )
 
+    st.markdown("##### Deduplikationsverfahren")
+    dedup_method = st.radio(
+        "Verfahren für die Zusammenführung",
+        ["Konservative Python-Regeln (DOI/PMID/Titel+Jahr)",
+         "ASySD (offizielles R-Paket)"],
+        horizontal=True,
+        key="review_dedup_method",
+    )
+    if not asysd_available():
+        st.caption(
+            "ASySD benötigt Rscript und das offizielle R-Paket auf dem "
+            "Streamlit-Server. Auf Standard-Community-Cloud-Installationen "
+            "steht es in der Regel nicht zur Verfügung. Nach einem Abruf "
+            "kannst du eine ASySD-Importdatei und das lokale R-Skript herunterladen."
+        )
     if submitted:
         if not (use_pubmed or use_openalex or use_scopus or ris_files):
             st.warning("Wähle mindestens eine API oder lade eine RIS-Datei hoch.")
@@ -203,18 +224,70 @@ def render() -> None:
                 for err in failures:
                     st.error(err)
             if raw:
-                merged = merge_records(raw)
-                st.session_state.review_data = (merged, audit)
-                st.session_state.review_ai = {}
-                st.session_state.review_human = {}
-                st.session_state.review_screening_runs = []
-                st.success(
-                    f"{len(raw):,} Datensätze eingelesen → "
-                    f"{len(merged.records):,} nach Deduplikation."
-                )
+                st.session_state.review_raw = raw
+                try:
+                    if dedup_method.startswith("ASySD"):
+                        with st.spinner("Offizielles ASySD-R-Paket wird ausgeführt"):
+                            merged = run_asysd(raw)
+                        engine = "ASySD R dedup_citations"
+                    else:
+                        merged = merge_records(raw)
+                        engine = "Python exact DOI/PMID/title-year + fuzzy suggestions"
+                    audit.append({"source": "DEDUPLICATION", "query": "",
+                                  "status": "completed", "dedup_engine": engine,
+                                  "retrieved": len(merged.records),
+                                  "complete": True})
+                    st.session_state.review_data = (merged, audit)
+                    st.session_state.review_ai = {}
+                    st.session_state.review_human = {}
+                    st.session_state.review_screening_runs = []
+                    st.session_state.review_dedup_engine = engine
+                    st.success(
+                        f"{len(raw):,} Datensätze eingelesen → "
+                        f"{len(merged.records):,} nach Deduplikation ({engine})."
+                    )
+                except ASySDError as exc:
+                    st.session_state.pop("review_data", None)
+                    st.error("ASySD konnte nicht ausgeführt werden: " + str(exc))
+                    st.info(
+                        "Keine automatische Ersatz-Deduplikation wurde heimlich "
+                        "vorgenommen. Die Originaldatensätze stehen für den "
+                        "Export und den alternativen Python-Lauf zur Verfügung."
+                    )
             else:
                 st.session_state.pop("review_data", None)
+                st.session_state.pop("review_raw", None)
                 st.error("Keine Datensätze verfügbar; kein Screening möglich.")
+
+    if st.session_state.get("review_raw"):
+        with st.expander("ASySD: Eingabedaten und offizielles R-Skript herunterladen"):
+            st.caption(
+                "Diese Dateien ermöglichen eine echte ASySD-Ausführung in "
+                "einer R-Umgebung. Sie enthalten die Rohdaten vor der "
+                "Python-Deduplikation mit eindeutigen record_id-Werten."
+            )
+            c_asysd = st.columns(2)
+            with c_asysd[0]:
+                st.download_button(
+                    "ASySD-Input (CSV)",
+                    asysd_csv(st.session_state.review_raw),
+                    "searchbridge_asysd_input.csv", "text/csv",
+                    use_container_width=True)
+            with c_asysd[1]:
+                st.download_button(
+                    "ASySD-R-Skript",
+                    BRIDGE_SCRIPT.read_bytes(),
+                    "asysd_bridge.R", "text/plain",
+                    use_container_width=True)
+            st.code(
+                'Rscript asysd_bridge.R searchbridge_asysd_input.csv '
+                'asysd_unique.csv asysd_manual.csv', language="bash"
+            )
+            st.caption(
+                "Voraussetzung: R und das offizielle Paket camaradesuk/ASySD. "
+                "Die extern erstellten ASySD-Ergebnisse werden noch nicht "
+                "automatisch in die laufende Cloud-Sitzung reintegriert."
+            )
 
     if "review_data" not in st.session_state:
         return
@@ -227,7 +300,14 @@ def render() -> None:
     m[0].metric("Rohdatensätze", merged.input_count)
     m[1].metric("Eindeutig nach Deduplikation", len(records))
     m[2].metric("Automatisch entfernte Dubletten", merged.duplicates_removed)
-    m[3].metric("Fuzzy-Kandidaten (manuell)", len(merged.fuzzy_review))
+    m[3].metric("Unsichere Dublettenpaare (manuell)", len(merged.fuzzy_review))
+    st.caption(
+        "Verwendet: " + st.session_state.get(
+            "review_dedup_engine", "Python DOI/PMID/Titel+Jahr"
+        ) + ". Keine unbestätigten Dubletten werden automatisch entfernt. "
+        "Bei ASySD stammen die Vorschläge aus der offiziellen R-Pipeline; "
+        "bei Python aus einer Ähnlichkeitsprüfung ab 0.94."
+    )
     st.dataframe([
         {"Quelle": a.get("source"), "Treffer insgesamt": a.get("total_hits", ""),
          "Abgerufen": a.get("retrieved", 0),
@@ -307,9 +387,18 @@ def render() -> None:
     )
     q1, q2, q3 = st.columns([1, 1, 1])
     with q1:
-        openai_model = st.text_input(
-            "OpenAI-Modell", value="gpt-4o-mini", key="review_openai_model",
-            help="Ein Modell verwenden, das Responses Structured Outputs unterstützt.")
+        openai_model = st.selectbox(
+            "OpenAI-Modell",
+            options=list(SCREENING_MODELS.values()),
+            index=list(SCREENING_MODELS.values()).index(DEFAULT_MODEL),
+            format_func=lambda m: next(
+                (name + " · " + m for name, value in SCREENING_MODELS.items()
+                 if value == m), m),
+            key="review_openai_model",
+            help="Terra ist der Standard. Sol eignet sich für komplexere "
+                 "Fälle, Luna für kostensensitive grössere Stichproben. "
+                 "Verfügbarkeit hängt vom API-Zugang ab."
+        )
     with q2:
         openai_key = st.text_input(
             "OpenAI API-Key", type="password", key="review_openai_key")
