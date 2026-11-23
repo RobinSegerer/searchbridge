@@ -1,0 +1,14 @@
+(
+  ((College OR university) adj2 (student* OR graduate* OR undergraduate*)).ti,ab,kf.
+  OR exp Students/
+)
+AND
+(
+  ((academic OR university) adj2 (performance OR self-concept*)).ti,ab,kf.
+  OR exp Self Concept/
+)
+AND
+(
+  (social media OR Instagram OR TikTok).ti,ab,kf.
+  OR exp Social Media/
+)
