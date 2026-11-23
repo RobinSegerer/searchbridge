@@ -128,7 +128,7 @@ def _alternatives(node: Node) -> list[str]:
         return [node.value.strip().strip('"\'')]
     if node.kind == "bool" and node.value == "OR":
         return _alternatives(node.left) + _alternatives(node.right)
-    raise ValueError("Proximity-Gruppe muss aus Begriffen oder OR-verknüpften Begriffen bestehen (kein AND, NOT oder Heading).")
+    raise ValueError("A proximity group must consist of terms or OR-connected terms (no AND, NOT, or heading).")
 
 
 def extract_clauses(ovid_text: str) -> list[ProximityClause]:
@@ -153,7 +153,7 @@ def extract_clauses(ovid_text: str) -> list[ProximityClause]:
             walk(node.right, default_fields)
     walk(root)
     if not result:
-        raise ValueError("Kein adjN-Ausdruck gefunden. Bitte eine Ovid-Proximity-Klausel wie '(young OR juvenil*) adj2 (offend* OR delinqu*)' einfügen.")
+        raise ValueError("No adjN expression found. Enter an Ovid proximity clause such as '(young OR juvenil*) adj2 (offend* OR delinqu*)'.")
     return result
 
 
@@ -170,7 +170,7 @@ def tokenize(text: str) -> list[Tok]:
 
 def _word_regex(part: str) -> re.Pattern:
     if re.search(r"[^\w*?]", part, flags=re.UNICODE):
-        raise ValueError(f"Ungültiges Termfragment: {part}")
+        raise ValueError(f"Invalid term fragment: {part}")
     rx = "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in part.casefold())
     return re.compile(r"^" + rx + r"$", re.I)
 
@@ -178,7 +178,7 @@ def _word_regex(part: str) -> re.Pattern:
 def _compile_alternative(term: str) -> tuple[re.Pattern, ...]:
     parts = re.findall(r"[^\W_]+(?:[?*][^\W_]*)*", term, flags=re.UNICODE)
     if not parts:
-        raise ValueError(f"Ungültiger Suchbegriff: {term}")
+        raise ValueError(f"Invalid search term: {term}")
     return tuple(_word_regex(x) for x in parts)
 
 
@@ -243,7 +243,7 @@ def check_ris_records(records: list[RISRecord], clause: ProximityClause) -> list
     include_ab = any(f in clause.fields for f in ("ab", "tw", "mp"))
     include_kw = any(f in clause.fields for f in ("kf", "kw", "id", "tw", "mp"))
     if not (include_ti or include_ab or include_kw):
-        raise ValueError("Keines der Feldkürzel bezeichnet Titel, Abstract oder Keywords. Unterstützt: ti, ab, kf, kw, id, tw, mp.")
+        raise ValueError("None of the field codes refer to title, abstract, or keywords. Supported: ti, ab, kf, kw, id, tw, mp.")
     for record in records:
         fields: list[tuple[str, str]] = []
         if include_ti and record.title:
