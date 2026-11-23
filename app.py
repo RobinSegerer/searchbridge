@@ -20,6 +20,7 @@ from pubmed_proximity import (
     PubMedError, parsed_terms, build_pubmed_and_query, fetch_pubmed_candidates,
 )
 from harvesting_ui import render as render_harvesting
+from review_pipeline_ui import render as render_review_pipeline
 from mesh_expansion import (
     MeSHError, find_exp_headings, expand_mesh_heading, ExplodedHeading,
     display_rows as mesh_display_rows, csv_export as mesh_csv_export,
@@ -134,9 +135,9 @@ def cached_mesh_expansion(name: str, qualifier: str):
     return expand_mesh_heading(ExplodedHeading(name, qualifier))
 
 
-translate_tab, pubmed_tab, ris_tab, harvest_tab, help_tab = st.tabs([
+translate_tab, pubmed_tab, ris_tab, harvest_tab, pipeline_tab, help_tab = st.tabs([
     "Search String Translator", "PubMed Proximity Search",
-    "RIS Proximity Checker", "Term Harvesting", "Help",
+    "RIS Proximity Checker", "Term Harvesting", "Review Pipeline", "Help",
 ])
 
 with translate_tab:
@@ -591,9 +592,24 @@ with harvest_tab:
     render_harvesting()
 
 
+with pipeline_tab:
+    render_review_pipeline()
+
+
 with help_tab:
     st.markdown("""
     ### How it works
+    - The Review Pipeline tab searches PubMed, OpenAlex (OQL API) and
+      Scopus (Elsevier API key/entitlements) and accepts additional RIS exports
+      from other databases. Results are merged preserving source provenance.
+      Exact DOI, PMID and non-conflicting normalized title+year duplicates
+      are merged; fuzzy matches are reported only for manual review.
+    - Lexical TF-IDF ranks all deduplicated records without excluding any.
+      OpenAI Responses API screening is optional, user-key-funded and opt-in:
+      suggestions are structured Include/Exclude/Manual Review with evidence
+      and uncertainty; only human decisions count as final.
+      The full run exports RIS, CSV, JSON audits, deduplication logs,
+      source counts, AI suggestions and human decisions.
     - The translator rewrites supported Ovid operators and field codes.
     - The OpenAlex tab now generates native **OQL proximity** rather than
       replacing Ovid adjN with AND. adj2 maps to within 1 intervening word,
@@ -633,4 +649,8 @@ with help_tab:
     From [Streamlit Community Cloud](https://share.streamlit.io/), choose this
     GitHub repository, main branch and app.py. No paid API key is required.
     Uploaded RIS files are processed in the hosted Streamlit environment.
+    The optional Review Pipeline uses external APIs. PubMed is free subject
+    to NCBI rate limits; OpenAlex has budget and paging rules (API key is
+    recommended); Scopus requires subscription/permissions. OpenAI screening
+    requires an API key, express consent and expert verification.
     """)
