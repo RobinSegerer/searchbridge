@@ -18,6 +18,13 @@ import requests
 
 from review_core import ReviewRecord
 
+DEFAULT_MODEL = "gpt-6.1-terra"
+SCREENING_MODELS = {
+    "Terra (ausgewogen)": "gpt-6.1-terra",
+    "Sol (höhere Kapazität)": "gpt-6.2-sol",
+    "Luna (kostengünstig)": "gpt-6-luna",
+}
+
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -80,7 +87,7 @@ def _extract_response_text(data: dict) -> str:
 def screen_one(
     record: ReviewRecord, *,
     criteria: str, key: str,
-    model: str = "gpt-4o-mini",
+    model: str = DEFAULT_MODEL,
     session: requests.Session | None = None,
 ) -> dict:
     if not key.strip():
@@ -111,7 +118,8 @@ def screen_one(
                 }, ensure_ascii=False))
             }
         ],
-        "max_output_tokens": 500,
+        "max_output_tokens": 1500,
+        "reasoning": {"effort": "low"},
         "text": {"format": {
             "type": "json_schema",
             "name": "searchbridge_title_abstract_screening",
@@ -179,7 +187,7 @@ def screen_one(
 def screen_batch(
     records: list[ReviewRecord], *,
     criteria: str, key: str,
-    model: str = "gpt-4o-mini",
+    model: str = DEFAULT_MODEL,
     max_items: int = 30,
     progress: Callable[[int, int], None] | None = None,
 ) -> ScreeningRun:
