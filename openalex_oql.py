@@ -71,44 +71,30 @@ def _literal(text: str, notes: list[str], exact: bool = False) -> str:
     return term
 
 
-def _repair_pair_wildcards(
-    left: str, right: str, notes: list[str], lost: list[str],
-) -> tuple[str, str]:
-    """Enforce stricter OpenAlex proximity wildcard restrictions.
+def _proximity_pair_supported(
+    left: str, right: str, notes: list[str],
+) -> bool:
+    """Check the official OpenAlex wildcard limits without changing words.
 
-    A proximity expression with two wildcards requires >=4 characters
-    preceding each wildcard. If one fails, remove only that wildcard
-    explicitly and log the changed retrieval semantics. Never present
-    the result as exactly equivalent to the Ovid original.
+    In proximity, a 2-wildcard pair requires 4 leading characters
+    before each wildcard. Invalid pairs use a documented broader Boolean
+    AND as a candidate search, not a narrower broken literal.
     """
     a = _clean_phrase(left, notes)
     b = _clean_phrase(right, notes)
-    if a.count("*") + a.count("?") + b.count("*") + b.count("?") < 2:
-        return a, b
-
-    def repair(text: str) -> str:
-        chars: list[str] = []
-        for index, char in enumerate(text):
-            if char in "*?":
-                preceding = re.search(r"([A-Za-z0-9]+)$", "".join(chars))
-                if not preceding or len(preceding.group(1)) < 4:
-                    new_term = text[:index] + text[index+1:]
-                    lost.append(
-                        f"OpenAlex-Proximity: Wildcard in {text!r} nach weniger "
-                        "als vier Zeichen nicht zulässig, daher entfernt. "
-                        "Dieser Paarzweig ist enger als die Ovid-Suche."
-                    )
-                    return repair(new_term)
-            chars.append(char)
-        return "".join(chars)
-
-    a, b = repair(a), repair(b)
-    if a.count("*") + a.count("?") + b.count("*") + b.count("?") > 2:
-        raise OQLConversionError(
-            "Mehr als zwei Wildcards in einer OpenAlex-Proximity-Klausel: "
-            f"{left!r}, {right!r}. Bitte manuell zerlegen."
-        )
-    return a, b
+    wildcards = []
+    for term in (a, b):
+        for match in re.finditer(r"[*?]", term):
+            leading = re.search(r"([A-Za-z0-9]+)$", term[:match.start()])
+            prefix_length = len(leading.group(1)) if leading else 0
+            wildcards.append(prefix_length)
+    if len(wildcards) > 2:
+        return False
+    if any(n < 3 for n in wildcards):
+        return False
+    if len(wildcards) == 2 and any(n < 4 for n in wildcards):
+        return False
+    return True
 
 
 def _or_alternatives(node: Node) -> list[str] | None:
@@ -177,11 +163,19 @@ def _render(
         pairs = []
         for left in a:
             for right in b:
-                left_clean, right_clean = _repair_pair_wildcards(
-                    left, right, notes, lost)
-                x = _literal(left_clean, notes, exact=True)
-                y = _literal(right_clean, notes, exact=True)
-                pairs.append(f"({x} and {y} within {n-1} words of each other)")
+                x = _literal(left, notes, exact=True)
+                y = _literal(right, notes, exact=True)
+                if _proximity_pair_supported(left, right, notes):
+                    pairs.append(f"({x} and {y} within {n-1} words of each other)")
+                else:
+                    pairs.append(f"({x} AND {y})")
+                    lost.append(
+                        f"{node.value} für Paar {left!r} / {right!r}: "
+                        "OpenAlex-Wildcard-Regeln verhindern native Proximity; "
+                        "nur für dieses Paar breites AND (OHNE Wortnähe). "
+                        "Die ursprüngliche Wildcard bleibt erhalten und "
+                        "die Recherche wird für diesen Paarzweig weiter."
+                    )
         notes.append(
             f"{node.value} → native OpenAlex-Nähe mit höchstens {n-1} "
             "dazwischenliegenden Wörtern; OR-Wortgruppen vollständig "
@@ -289,5 +283,7 @@ def translate_openalex_oql(
         "unverified": list(dict.fromkeys(unverified)),
         "validated_equivalence": False,
         "uses_post": not can_get,
-        "proximity_preserved": True,
+        "proximity_preserved": not any(
+            "nur für dieses Paar breites AND" in entry for entry in lost
+        ),
     }
