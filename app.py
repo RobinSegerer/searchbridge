@@ -16,6 +16,7 @@ from ris_proximity import (
 from pubmed_proximity import (
     PubMedError, parsed_terms, build_pubmed_and_query, fetch_pubmed_candidates,
 )
+from harvesting_ui import render as render_harvesting
 from mesh_expansion import (
     MeSHError, find_exp_headings, expand_mesh_heading, ExplodedHeading,
     display_rows as mesh_display_rows, csv_export as mesh_csv_export,
@@ -130,9 +131,9 @@ def cached_mesh_expansion(name: str, qualifier: str):
     return expand_mesh_heading(ExplodedHeading(name, qualifier))
 
 
-translate_tab, pubmed_tab, ris_tab, help_tab = st.tabs([
+translate_tab, pubmed_tab, ris_tab, harvest_tab, help_tab = st.tabs([
     "Search String Translator", "PubMed Proximity Search",
-    "RIS Proximity Checker", "Help",
+    "RIS Proximity Checker", "Term Harvesting", "Help",
 ])
 
 with translate_tab:
@@ -400,6 +401,10 @@ with ris_tab:
             st.warning("The selected clause has changed. Click Check RIS again.")
         display_results(records, rows, matched_clause)
         download_results(records, rows, matched_clause, name, "RIS")
+
+with harvest_tab:
+    render_harvesting()
+
 
 with help_tab:
     st.markdown("""
