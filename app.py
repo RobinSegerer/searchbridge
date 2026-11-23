@@ -151,7 +151,15 @@ with translate_tab:
             with tab:
                 st.code(item["query"], language=None)
                 for note in item["notes"]:
-                    st.caption(note)
+                    if ("PROVISORISCHE" in note or "KEINE Emtree" in note or
+                            "kontrollierte Heading-Klausel(n) entfernt" in note):
+                        st.warning(note)
+                    else:
+                        st.caption(note)
+                if item.get("unverified"):
+                    with st.expander(f"Unverified subject headings ({len(item['unverified'])})", expanded=True):
+                        st.write(item["unverified"])
+                        st.caption("Verify descriptors against the target database thesaurus and provide confirmed mappings above.")
                 if item["removed"]:
                     with st.expander("Removed controlled descriptors"):
                         st.write(item["removed"])
@@ -164,7 +172,7 @@ with translate_tab:
         st.download_button("Download translated queries + quality report",
                            data.getvalue(), "searchbridge_translations.zip",
                            "application/zip")
-    st.info("Translations are syntax proposals, not validated retrieval equivalents.")
+    st.info("These are syntax proposals, not validated retrieval equivalents. For PsycINFO, MeSH headings without verified mappings are provisional; for Embase, such headings are converted into labelled free-text fallbacks. Web of Science and Scopus omit indexed headings entirely.")
 
 with pubmed_tab:
     st.subheader("Direct PubMed AND search followed by Ovid-style adjN filtering")
