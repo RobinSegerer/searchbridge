@@ -233,7 +233,7 @@ def render() -> None:
             st.warning(
                 f"{len(records) - indexed:,} publications without MeSH indexing "
                 "are not counted as negatives. Percentages refer "
-                "to the {indexed:,} indexed publications."
+                f"to the {indexed:,} indexed publications."
             )
 
     score_weight = 0.6
