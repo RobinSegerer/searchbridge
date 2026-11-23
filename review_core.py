@@ -20,7 +20,7 @@ import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from difflib import SequenceMatcher
-from typing import Optional
+from typing import Callable, Optional
 
 from ris_proximity import RISRecord
 
@@ -171,12 +171,23 @@ class MergeResult:
     audit: list[dict]
     fuzzy_review: list[dict]
     input_count: int
+    fuzzy_skipped: dict[str, int] = field(default_factory=dict)
 
 
-def merge_records(records: list[ReviewRecord], *, fuzzy_limit: int = 100) -> MergeResult:
+def merge_records(
+    records: list[ReviewRecord], *, fuzzy_limit: int = 100,
+    progress: Callable[[str, int, int], None] | None = None
+) -> MergeResult:
     data = [ReviewRecord(**asdict(r)) for r in records]
     parent = list(range(len(data)))
+    # Track DOI values per connected component. The previous code scanned
+    # *all* records for every union (quadratic); this maintains metadata
+    # incrementally and makes exact-identifier dedup close to linear.
+    component_dois = [{r.doi} if r.doi else set() for r in data]
     reason: dict[tuple[int, int], str] = {}
+    def report(stage: str, done: int, total: int) -> None:
+        if progress and (done % 100 == 0 or done == total or done == 0):
+            progress(stage, done, total)
     doi_to_idx: dict[str, int] = {}
     pmid_to_idx: dict[str, int] = {}
     title_to_idx: dict[tuple[str, str], int] = {}
@@ -192,13 +203,16 @@ def merge_records(records: list[ReviewRecord], *, fuzzy_limit: int = 100) -> Mer
         if a == b:
             return
         # Two distinct non-empty DOIs never merge even when PMIDs/titles collide.
-        dois_a = {data[k].doi for k in range(len(data)) if root(k) == a and data[k].doi}
-        dois_b = {data[k].doi for k in range(len(data)) if root(k) == b and data[k].doi}
+        # A connected component with multiple distinct DOIs is never created.
+        dois_a, dois_b = component_dois[a], component_dois[b]
         if dois_a and dois_b and not (dois_a & dois_b):
             return
         parent[b] = a
+        component_dois[a].update(dois_b)
+        component_dois[b].clear()
         reason[i, j] = why
 
+    report("Identifier abgleichen", 0, len(data))
     for i, r in enumerate(data):
         if r.doi:
             if r.doi in doi_to_idx:
@@ -217,13 +231,15 @@ def merge_records(records: list[ReviewRecord], *, fuzzy_limit: int = 100) -> Mer
                 union(title_to_idx[k], i, "normalized title + year")
             else:
                 title_to_idx[k] = i
+        report("Identifier abgleichen", i + 1, len(data))
 
     groups: dict[int, list[ReviewRecord]] = defaultdict(list)
     for i, item in enumerate(data):
         groups[root(i)].append(item)
     merged: list[ReviewRecord] = []
     audit: list[dict] = []
-    for group in groups.values():
+    report("Metadaten zusammenführen", 0, len(groups))
+    for group_index, group in enumerate(groups.values(), 1):
         # Longest abstract and most complete metadata survive, independent
         # of the order in which sources were fetched.
         representative = max(
@@ -257,6 +273,7 @@ def merge_records(records: list[ReviewRecord], *, fuzzy_limit: int = 100) -> Mer
                     "persistent DOI conflicts block auto-merge"
                 ),
             })
+        report("Metadaten zusammenführen", group_index, len(groups))
     merged.sort(key=lambda r: (norm_title(r.title), r.uid))
 
     fuzzy: list[dict] = []
@@ -266,18 +283,22 @@ def merge_records(records: list[ReviewRecord], *, fuzzy_limit: int = 100) -> Mer
     for item in merged:
         if item.year and item.title:
             year_groups[item.year].append(item)
-    for year, options in year_groups.items():
+    skipped: dict[str, int] = {}
+    report("Ähnliche Titel prüfen", 0, len(year_groups))
+    for year_index, (year, options) in enumerate(year_groups.items(), 1):
         if len(options) > 250:
-            continue  # Limit avoids an implicit all-pairs processing promise.
+            skipped[year] = len(options)
+            report("Ähnliche Titel prüfen", year_index, len(year_groups))
+            continue  # Avoid hidden quadratic work on very large year groups.
+        normalized = {r.uid: norm_title(r.title) for r in options}
         for i, a in enumerate(options):
             for b in options[i+1:]:
                 if a.doi and b.doi and a.doi != b.doi:
                     continue
-                if abs(len(norm_title(a.title)) - len(norm_title(b.title))) > 12:
+                norm_a, norm_b = normalized[a.uid], normalized[b.uid]
+                if abs(len(norm_a) - len(norm_b)) > 12:
                     continue
-                similarity = SequenceMatcher(
-                    None, norm_title(a.title), norm_title(b.title)
-                ).ratio()
+                similarity = SequenceMatcher(None, norm_a, norm_b).ratio()
                 if similarity >= 0.94:
                     fuzzy.append({
                         "uid_a": a.uid, "uid_b": b.uid, "year": year,
@@ -289,12 +310,18 @@ def merge_records(records: list[ReviewRecord], *, fuzzy_limit: int = 100) -> Mer
                         break
             if len(fuzzy) >= fuzzy_limit:
                 break
+        report("Ähnliche Titel prüfen", year_index, len(year_groups))
         if len(fuzzy) >= fuzzy_limit:
+            # The manual-candidate list is capped, so do not imply that
+            # every possible similar-title pair was tested.
+            for remaining_year, rows in list(year_groups.items())[year_index:]:
+                skipped[remaining_year] = len(rows)
             break
     counts = dict(sorted(Counter(r.source for r in data).items()))
     return MergeResult(
         records=merged, counts=counts, duplicates_removed=len(data)-len(merged),
-        audit=audit, fuzzy_review=fuzzy, input_count=len(data)
+        audit=audit, fuzzy_review=fuzzy, input_count=len(data),
+        fuzzy_skipped=skipped,
     )
 
 
