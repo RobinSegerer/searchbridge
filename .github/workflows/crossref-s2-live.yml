@@ -1,0 +1,58 @@
+name: Live Crossref and Semantic Scholar translation checks
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/crossref-s2-live.yml
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install requests
+      - name: Probe translated Crossref search and S2 bulk grammar
+        run: |
+          python - <<'PY'
+          import requests
+          from external_translation import translate_external
+
+          q = """(((college OR university) adj2 (student* OR graduate*)).ti,ab,kf.)
+          AND (((academic OR scholarly) adj2 (achievement OR performance)).ti,ab,kf.)
+          AND (((online OR social) adj3 (platform* OR network*)).ti,ab,kf.)"""
+          result = translate_external(q)
+          c = result["Crossref"]
+          s = result["Semantic Scholar"]
+          print("Crossref combined exploratory query:", c["query"])
+          print("Crossref source term count:", c["source_term_count"])
+          print("Crossref anchor probes:", [(x["block"], x["query"]) for x in c["anchors"]])
+          probes = [("combined", c["url"])] + [
+              ("concept " + str(x["block"]), x["url"]) for x in c["anchors"][:2]
+          ]
+          for label, url in probes:
+              response = requests.get(url, timeout=30,
+                                      headers={"User-Agent": "SearchBridge/0.5 (academic bibliographic API smoke check)"})
+              print("Crossref", label, "HTTP", response.status_code)
+              response.raise_for_status()
+              payload = response.json()
+              assert payload["message-type"] == "work-list"
+              print("Crossref", label, "total", payload["message"]["total-results"],
+                    "first DOI:", payload["message"]["items"][0].get("DOI", "(none)") if payload["message"]["items"] else "(empty)")
+          print("S2 Bulk query:", s["query"])
+          assert s["url"], "S2 short smoke query unexpectedly too long"
+          response = requests.get(s["url"], timeout=30)
+          print("S2 Bulk HTTP", response.status_code, "body:", response.text[:500])
+          if response.status_code == 200:
+              payload = response.json()
+              assert isinstance(payload.get("data"), list), "S2 missing data"
+              print("S2 bulk accepted query. Estimated total:", payload.get("total"))
+          elif response.status_code in (401, 403, 429):
+              print("S2 live syntax unverified: API authentication/rate limit barrier.")
+          else:
+              raise AssertionError("S2 rejected query, HTTP " + str(response.status_code))
+          PY
