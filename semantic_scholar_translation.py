@@ -82,10 +82,18 @@ def _or(parts: list[str]) -> str:
     return "(" + " | ".join(parts) + ")"
 
 
+def _prefix_group(symbol: str, part: str) -> str:
+    # A parenthesized Boolean group is already enclosed; avoid adding
+    # duplicate nesting while retaining required/excluded group semantics.
+    if part.startswith("(") and part.endswith(")"):
+        return symbol + part
+    return symbol + "(" + part + ")"
+
+
 def _and(parts: list[str]) -> str:
     if len(parts) == 1:
         return parts[0]
-    return "(" + " ".join(f"+({p})" for p in parts) + ")"
+    return "(" + " ".join(_prefix_group("+", p) for p in parts) + ")"
 
 
 def _render(node: Node, notes: list[str], lost: list[str],
@@ -129,7 +137,7 @@ def _render(node: Node, notes: list[str], lost: list[str],
         if node.value == "NOT":
             left = _render(node.left, notes, lost, unverified, explosions)
             right = _render(node.right, notes, lost, unverified, explosions)
-            return f"(+({left}) -({right}))"
+            return "(" + _prefix_group("+", left) + " " + _prefix_group("-", right) + ")"
     raise ValueError(f"Unbekannter Suchoperator: {node.kind}")
 
 
