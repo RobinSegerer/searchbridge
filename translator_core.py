@@ -263,7 +263,9 @@ def render(node: Node, target: str, notes: List[str]) -> str:
                 if not fs:
                     fs = ["ti", "ab", "kw"]
             fs = list(dict.fromkeys(fs))
-            return f"({inner}):{','.join(fs)}"
+            if not (inner.startswith("(") and inner.endswith(")")):
+                inner = f"({inner})"
+            return f"{inner}:{','.join(fs)}"
         if node.value.lower() not in (".ti,ab,kf.", ".ti,ab.", ".ti,ab,kw.", ".ti,ab,id."):
             notes.append(f"Spezifische Feldbegrenzung {node.value} wurde in {target} zu einer allgemeinen Titel/Abstract/Keyword-Suche verbreitert.")
         return inner
