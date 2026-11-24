@@ -20,7 +20,7 @@ from review_core import ReviewRecord
 
 DEFAULT_MODEL = "gpt-6.1-terra"
 SCREENING_MODELS = {
-    "Terra (ausgewogen)": "gpt-6.1-terra",
+    "Terra (balanced)": "gpt-6.1-terra",
     "Sol (higher capacity)": "gpt-6.2-sol",
     "Luna (cost-efficient)": "gpt-6-luna",
 }
@@ -35,8 +35,14 @@ SCHEMA = {
         "evidence": {"type": "string"},
         "uncertainty": {"type": "string",
                         "enum": ["low", "medium", "high"]},
+        "potential_relevance": {"type": "string",
+                        "enum": ["high", "medium", "low", "unknown"]},
+        "criteria_assessment": {"type": "string"},
     },
-    "required": ["decision", "reason", "evidence", "uncertainty"],
+    "required": [
+        "decision", "reason", "evidence", "uncertainty",
+        "potential_relevance", "criteria_assessment",
+    ],
 }
 
 SYSTEM_INSTRUCTIONS = """You are a conservative evidence-synthesis title/abstract
@@ -48,6 +54,13 @@ Apply the supplied eligibility criteria to each article.
 'manual_review' when eligibility is unclear or information is missing,
 including missing/short abstracts. Never assume a missing criterion is absent.
 A plausible related construct is not necessarily the requested construct.
+For each mandatory criterion, state whether the abstract clearly supports it,
+clearly contradicts it, or does not report enough information. Summarize this
+briefly in criteria_assessment. An unreported item is not a negative result.
+Separately rate potential_relevance as high, medium, low, or unknown:
+a promising candidate can have high relevance even if its final eligibility is
+manual_review because some reporting detail is missing.
+Do not inflate include recommendations by assuming unreported criteria.
 Quote short verbatim evidence from the title or abstract when available.
 If there is no supporting passage, leave evidence empty.
 Do not cite facts from outside the submitted title and abstract.
@@ -100,7 +113,10 @@ def screen_one(
         return {
             "decision": "manual_review", "reason": "Abstract missing: cannot "
             "confirm all eligibility criteria from the title alone.",
-            "evidence": "", "uncertainty": "high", "model": model,
+            "evidence": "", "uncertainty": "high",
+            "potential_relevance": "unknown",
+            "criteria_assessment": "No abstract supplied.",
+            "evidence_verified": False, "model": model,
             "origin": "missing_metadata_rule",
         }
     payload = {
@@ -154,31 +170,35 @@ def screen_one(
             raise ValueError("Invalid screening decision.")
         if decision["uncertainty"] not in ("low", "medium", "high"):
             raise ValueError("Invalid uncertainty label.")
+        if decision["potential_relevance"] not in (
+            "high", "medium", "low", "unknown"
+        ):
+            raise ValueError("Invalid potential relevance label.")
         if any(not isinstance(decision[k], str) for k in SCHEMA["required"]):
             raise ValueError("Non-string field in structured response.")
     except (ValueError, TypeError) as exc:
         raise OpenAIScreenError(
             "OpenAI returned invalid screening JSON; manually review."
         ) from exc
-    # Protect against a model returning 'include' or 'exclude' with no reason.
+    # A quotation is useful audit evidence, but a verbatim mismatch is not
+    # itself a scientific eligibility criterion. Retain the preliminary advice
+    # and flag unverified text for independent reviewer assessment.
+    evidence = decision["evidence"].strip()
+    source_text = record.title + " " + record.abstract
+    evidence_verified = bool(
+        evidence and evidence.casefold() in source_text.casefold()
+    )
+    decision["evidence_verified"] = evidence_verified
     if not decision["reason"].strip():
         decision["decision"] = "manual_review"
         decision["reason"] = "Model returned no rationale."
         decision["uncertainty"] = "high"
-    elif decision["decision"] in ("include", "exclude"):
-        # Require direct, verbatim lexical evidence before even showing a
-        # model recommendation. Never trust a fabricated quotation.
-        evidence = decision["evidence"].strip()
-        source_text = record.title + " " + record.abstract
-        if not evidence or evidence.casefold() not in source_text.casefold():
-            decision["decision"] = "manual_review"
-            decision["reason"] = (
-                "The model did not quote verifiable title/abstract evidence. "
-                "Human review is required. Prior rationale: "
-                + decision["reason"][:320]
-            )
-            decision["uncertainty"] = "high"
-            decision["evidence"] = ""
+    if not evidence_verified:
+        decision["review_note"] = (
+            "No verbatim quotation verified. Inspect the original abstract "
+            "and the model's criterion-by-criterion reasoning."
+        )
+        decision["uncertainty"] = "high"
     decision["model"] = model
     decision["origin"] = "openai_structured_suggestion"
     return decision
@@ -208,6 +228,9 @@ def screen_batch(
                 "decision": "manual_review", "reason": "API screening failed; "
                 "human assessment required.",
                 "evidence": "", "uncertainty": "high",
+                "potential_relevance": "unknown",
+                "criteria_assessment": "API request or response failed.",
+                "evidence_verified": False,
                 "model": model, "origin": "api_error",
             }
             errors.append(f"Record {item.uid}: {exc}")
