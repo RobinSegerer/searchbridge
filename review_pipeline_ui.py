@@ -438,23 +438,119 @@ def render() -> None:
                          use_container_width=True)
 
     st.divider()
-    st.markdown("#### 3 · Ranking for screening prioritization")
+    st.markdown("#### 3 · Semantic reranking for screening prioritization")
     focus = st.text_area(
-        "Research topic / target concept for ranking",
+        "Research question / target concept for ranking",
         "social media use and academic self concept among university students",
         key="review_focus", height=75,
-        help="This ranking is lexical, not an "
-             "inclusion/exclusion decision."
+        help="Describe the topic of interest, not an inclusion decision."
     )
-    ordered = lexical_rank(records, focus)
     st.caption(
-        "Title-weighted lexical TF-IDF cosine ranking. "
-        "A low score does NOT justify excluding a study "
-        "and no records are removed by ranking."
+        "The first stage retains title-weighted lexical TF-IDF for comparison. "
+        "The bi-encoder scores ALL retrieved records by meaning; a cross-encoder "
+        "then reranks its best semantic candidates. All records remain available."
     )
+    lexical_order = lexical_rank(records, focus)
+    ranking_mode = st.radio(
+        "Ranking mode",
+        ["Bi-encoder + Cross-encoder (recommended)", "Lexical TF-IDF only"],
+        horizontal=True, key="review_rank_mode",
+    )
+    rank_col, run_col = st.columns([1, 1])
+    with rank_col:
+        cross_top_k = st.number_input(
+            "Candidates for cross-encoder reranking",
+            min_value=1, max_value=2000, value=200, step=50,
+            key="review_cross_top_k",
+            help="The bi-encoder examines all records. The cross-encoder "
+                 "evaluates only its top K (up to 2,000); larger K takes longer.",
+        )
+    with run_col:
+        st.caption("Semantic models run locally via FastEmbed (ONNX/CPU). "
+                   "On first use, model files must download.")
+    rank_signature = (focus.strip(), int(cross_top_k),
+                      tuple(sorted(r.uid for r in records)))
+    rank_state = st.session_state.get("review_rerank")
+    rank_valid = (
+        isinstance(rank_state, dict)
+        and rank_state.get("signature") == rank_signature
+    )
+    if ranking_mode != "Lexical TF-IDF only":
+        if st.button("Run / refresh semantic reranking", key="run_review_rerank",
+                     type="primary"):
+            bar = st.progress(0.0, text="Preparing local semantic models")
+            def _rank_progress(stage, done, total):
+                fraction = done / max(1, total)
+                bar.progress(
+                    0.9 * fraction if stage == "Bi-encoder" else 1.0,
+                    text=f"{stage}: {done:,}/{total:,} records"
+                )
+            try:
+                with st.spinner("Loading embedding and cross-encoder models"):
+                    ranked = rerank_records(
+                        lexical_order, focus,
+                        cross_top_k=int(cross_top_k),
+                        progress=_rank_progress,
+                    )
+                st.session_state.review_rerank = {
+                    "signature": rank_signature,
+                    "ordered_uids": ranked.ordered_uids,
+                    "scores": ranked.scores,
+                    "cross_count": ranked.cross_count,
+                    "method": "bi_encoder_then_cross_encoder",
+                    "bi_model": ranked.bi_model,
+                    "cross_model": ranked.cross_model,
+                }
+                rank_state = st.session_state.review_rerank
+                rank_valid = True
+                st.success(
+                    f"Semantic ranking complete: {len(lexical_order):,} "
+                    f"records embedded; {ranked.cross_count:,} "
+                    "cross-encoded. None excluded."
+                )
+            except RerankError as exc:
+                st.error(str(exc))
+            finally:
+                bar.empty()
+        if not rank_valid:
+            st.info("Semantic ranking has not been run for these data/settings. "
+                    "The lexical order is shown until you run it.")
+    ordered = lexical_order
+    ranking_scores = {}
+    ranking_log = {"method": "title_weighted_tfidf", "focus": focus}
+    if (ranking_mode != "Lexical TF-IDF only"
+            and rank_valid and rank_state):
+        by_uid = {r.uid: r for r in lexical_order}
+        if set(rank_state["ordered_uids"]) == set(by_uid):
+            ordered = [by_uid[uid] for uid in rank_state["ordered_uids"]]
+            ranking_scores = rank_state["scores"]
+            ranking_log = {
+                "method": rank_state["method"],
+                "bi_encoder_model": rank_state["bi_model"],
+                "cross_encoder_model": rank_state["cross_model"],
+                "cross_encoded_count": rank_state["cross_count"],
+                "total_ranked": len(ordered),
+                "focus": focus,
+                "note": "All records retained. Cross-encoder scores are "
+                        "not calibrated inclusion probabilities.",
+            }
+            st.caption(
+                f"Active: bi-encoder {BI_MODEL_ID} on all {len(ordered):,} "
+                f"records, followed by {CROSS_MODEL_ID} on the top "
+                f"{rank_state['cross_count']:,} candidates."
+            )
+    with st.expander("How ranking differs from eligibility screening"):
+        st.write(
+            "TF-IDF measures keyword overlap (with titles double-weighted); "
+            "the bi-encoder compares semantic embeddings of the focus against "
+            "every title/abstract; the cross-encoder jointly scores the focus "
+            "and the top semantic candidates. These are order-only scores, "
+            "not thresholds or eligibility decisions. Records outside the "
+            "cross-encoder pool remain in the full review corpus."
+        )
     ai = st.session_state.setdefault("review_ai", {})
     human = st.session_state.setdefault("review_human", {})
-    items = [_screening_row(r, ai, human) for r in ordered[:300]]
+    items = [_screening_row(r, ai, human, ranking_scores) for r in ordered[:300]]
     st.dataframe(items, hide_index=True, use_container_width=True)
     if len(ordered) > 300:
         st.caption("Table preview limited to 300 records; exports contain all records.")
