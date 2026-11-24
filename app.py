@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import io
 import json
+import re
+from base64 import b64decode
+from pathlib import Path
+from PIL import Image
 import zipfile
 from datetime import datetime, timezone
 
@@ -28,7 +32,25 @@ from mesh_expansion import (
     labels_as_text as mesh_labels_as_text,
 )
 
-st.set_page_config(page_title="SearchBridge", page_icon="🔎", layout="wide")
+def _load_robin_logo() -> Image.Image:
+    """Decode the verified original PNG instead of rendering a nested-data SVG.
+
+    Using a real PIL image avoids Streamlit/SVG browser sanitization issues
+    and lets the identical uploaded emblem serve as the favicon.
+    """
+    svg_path = Path(__file__).resolve().parent / "assets" / "searchbridge-robin.svg"
+    content = svg_path.read_text(encoding="utf-8")
+    match = re.search(r'data:image/png;base64,([A-Za-z0-9+/=]+)', content)
+    if match is None:
+        raise RuntimeError("SearchBridge emblem does not contain PNG image data.")
+    png = b64decode(match.group(1), validate=True)
+    logo = Image.open(io.BytesIO(png))
+    logo.load()  # validate the complete PNG at startup
+    return logo.convert("RGBA")
+
+
+ROBIN_LOGO = _load_robin_logo()
+st.set_page_config(page_title="SearchBridge", page_icon=ROBIN_LOGO, layout="wide")
 st.markdown(
     """<style>
     .block-container{max-width:1260px;padding-top:1.7rem}
@@ -38,9 +60,9 @@ st.markdown(
     .hero p{color:#d9ecf0;margin:5px 0 0}
     </style>""", unsafe_allow_html=True
 )
-logo_col, hero_col = st.columns([1, 11], vertical_alignment="center", gap="small")
+logo_col, hero_col = st.columns([1.6, 10], vertical_alignment="center", gap="medium")
 with logo_col:
-    st.image("assets/searchbridge-robin.svg", width=110)
+    st.image(ROBIN_LOGO, width=120)
 with hero_col:
     st.markdown(
         '<div class="hero"><h1>SearchBridge</h1>'
