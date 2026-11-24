@@ -160,7 +160,9 @@ def render():
                     papers,calls=retrieve(query,key,int(limit))
                 st.session_state["consensus_corpus"]=(query,papers,calls)
                 st.session_state.pop("consensus_mesh",None)
-                st.session_state.pop("consensus_blocks",None)
+                for i in range(6):
+                    st.session_state.pop(f"consensus_free_{i}",None)
+                    st.session_state.pop(f"consensus_mesh_{i}",None)
             except (requests.RequestException,RuntimeError,ValueError,KeyError) as exc:
                 st.error("Retrieval failed: "+(str(exc) if isinstance(exc,RuntimeError) else type(exc).__name__))
     if "consensus_corpus" not in st.session_state: return
@@ -201,8 +203,16 @@ def render():
     blocks=[]
     for i in range(int(count)):
         st.markdown(f"**Concept {i+1}**")
-        free=st.multiselect("Text terms",[r["Term"] for r in rows[:200]],key=f"consensus_free_{i}")
-        controlled=st.multiselect("MeSH descriptors",[r["Term"] for r in mesh],key=f"consensus_mesh_{i}")
+        free_options=[r["Term"] for r in rows[:200]]
+        free_key=f"consensus_free_{i}"
+        if free_key in st.session_state:
+            st.session_state[free_key]=[t for t in st.session_state[free_key] if t in free_options]
+        free=st.multiselect("Text terms",free_options,key=free_key)
+        mesh_options=[r["Term"] for r in mesh]
+        mesh_key=f"consensus_mesh_{i}"
+        if mesh_key in st.session_state:
+            st.session_state[mesh_key]=[t for t in st.session_state[mesh_key] if t in mesh_options]
+        controlled=st.multiselect("MeSH descriptors",mesh_options,key=mesh_key)
         parts=[f'"{t}"[tiab]' for t in free]+[f'"{t}"[mh]' for t in controlled]
         if parts: blocks.append("("+" OR ".join(parts)+")")
     if blocks:
