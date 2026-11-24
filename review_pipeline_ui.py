@@ -58,7 +58,7 @@ def _screening_row(record, ai, overrides, ranking_scores=None) -> dict:
     return {
         **_record_fields(record),
         "UID": record.uid,
-        "Rank": record.rank_score,
+        "Lexical rank score": record.rank_score,
         "Lexical TF-IDF": record.rank_score,
         "Bi-encoder cosine": ranking.get("bi_encoder_cosine", ""),
         "Cross-encoder score": ranking.get("cross_encoder_score", ""),
@@ -769,10 +769,33 @@ def render() -> None:
         if suggestion:
             with st.expander("OpenAI suggestion – not binding", expanded=True):
                 st.markdown(
-                    "**Suggestion:** " + suggestion.get("decision", "unknown")
-                    + " · **Uncertainty:** "
+                    "**Safeguarded AI suggestion:** "
+                    + suggestion.get("decision", "unknown")
+                    + " · **Original LLM decision:** "
+                    + suggestion.get("raw_model_decision", "unknown")
+                )
+                st.caption(
+                    "Potential relevance (independent of eligibility): "
+                    + suggestion.get("potential_relevance", "unknown")
+                    + " · Uncertainty: "
                     + suggestion.get("uncertainty", "unknown")
                 )
+                if suggestion.get("safeguard_reasons"):
+                    st.warning(
+                        "Why this needs manual review: "
+                        + "; ".join(suggestion["safeguard_reasons"])
+                    )
+                assessments = suggestion.get("criterion_assessments") or []
+                if assessments:
+                    st.markdown("**Mandatory PICO/PCC criteria (AI assessments)**")
+                    st.dataframe([
+                        {"Criterion": item.get("criterion", ""),
+                         "Status": item.get("status", "unclear"),
+                         "Evidence": item.get("evidence", "")}
+                        for item in assessments
+                    ], hide_index=True, use_container_width=True)
+                else:
+                    st.caption("No per-criterion assessment available.")
                 st.markdown("**Model rationale:** "
                             + suggestion.get("reason", ""))
                 if suggestion.get("evidence"):
@@ -835,7 +858,7 @@ def render() -> None:
 
     with st.expander("Saved human decisions"):
         st.dataframe([
-            _screening_row(r, ai, human)
+            _screening_row(r, ai, human, ranking_scores)
             for r in ordered if _human_label(r.uid) != "not_reviewed"
         ], hide_index=True, use_container_width=True)
 
@@ -849,7 +872,7 @@ def render() -> None:
                            use_container_width=True)
     with c2:
         st.download_button("Screening results: CSV",
-                           _dict_csv([_screening_row(r, ai, human)
+                           _dict_csv([_screening_row(r, ai, human, ranking_scores)
                                       for r in ordered]),
                            "searchbridge_screening_results.csv", "text/csv",
                            use_container_width=True)
@@ -857,7 +880,8 @@ def render() -> None:
         st.download_button(
             "Audit + records + screening (ZIP)",
             _bundle(merged, ordered, search_log, ai, human,
-                    st.session_state.get("review_screening_runs", [])),
+                    st.session_state.get("review_screening_runs", []),
+                    ranking_scores=ranking_scores, ranking_log=ranking_log),
             "searchbridge_review_pipeline.zip",
             "application/zip", use_container_width=True, type="primary")
     st.info(
