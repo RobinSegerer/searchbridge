@@ -568,39 +568,54 @@ def render() -> None:
         )
     with q2:
         openai_key = st.text_input(
-            "OpenAI API-Key", type="password", key="review_openai_key")
+            "OpenAI API key", type="password", key="review_openai_key")
     with q3:
         screen_limit = st.number_input(
-            "Maximum records to pre-screen", min_value=1, max_value=60,
+            "Records per screening batch", min_value=1, max_value=60,
             value=20, step=5, key="review_screen_limit")
     share = st.checkbox(
         "I confirm that I have reviewed sharing these titles and abstracts "
         "with the OpenAI API and any applicable costs.",
         value=False, key="review_screen_consent")
+    pending_ai = [r for r in ordered if r.uid not in ai]
     st.caption(
-        "Only the first N ranked records are transmitted. "
-        "No API keys are included in exports or committed to GitHub. "
-        "API requests set store=false."
+        f"{len(ai):,} records already screened in this session; "
+        f"{len(pending_ai):,} awaiting AI screening. "
+        "Each click processes the next batch without repeating records. "
+        "No API keys are exported; requests set store=false."
     )
+    if ai and any(
+        x.get("criteria") not in (None, criteria.strip()) or
+        x.get("model") not in (None, openai_model)
+        for x in ai.values()
+    ):
+        st.warning(
+            "Existing AI suggestions used another model or eligibility "
+            "protocol. Check their criteria before combining decisions."
+        )
     if st.button(
-        "Run OpenAI pre-screening",
-        disabled=not share or not openai_key.strip() or len(criteria.strip()) < 12,
+        "Screen next unscreened batch",
+        disabled=(not pending_ai or not share or not openai_key.strip()
+                  or len(criteria.strip()) < 12),
         key="review_screen_start",
     ):
         bar = st.progress(0.0)
-        with st.spinner("Processing OpenAI structured outputs"):
+        with st.spinner("Processing OpenAI screening suggestions"):
             result = screen_batch(
-                ordered, criteria=criteria, key=openai_key,
-                model=openai_model.strip(), max_items=int(screen_limit),
+                pending_ai, criteria=criteria, key=openai_key,
+                model=openai_model.strip(),
+                max_items=min(int(screen_limit), len(pending_ai)),
                 progress=lambda n, total: bar.progress(n / total),
             )
         bar.empty()
+        for value in result.decisions.values():
+            value["criteria"] = criteria.strip()
         st.session_state.review_ai.update(result.decisions)
         st.session_state.setdefault("review_screening_runs", []).append({
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "criteria": criteria,
             "model": result.model,
-            "prompt_protocol": "SearchBridge conservative title-abstract v1",
+            "prompt_protocol": "SearchBridge criterion-by-criterion v2",
             "attempted": result.attempted,
             "count_by_suggestion": dict(Counter(
                 x.get("decision") for x in result.decisions.values()
