@@ -594,64 +594,118 @@ def render() -> None:
             "OpenAI API-Key", type="password", key="review_openai_key")
     with q3:
         screen_limit = st.number_input(
-            "Maximum records to pre-screen", min_value=1, max_value=60,
-            value=20, step=5, key="review_screen_limit")
+            "Records per screening batch", min_value=1, max_value=100,
+            value=30, step=10, key="review_screen_limit",
+            help="Each click screens the next unscreened ranked records. "
+                 "Previous AI suggestions stay available in this session.")
     share = st.checkbox(
         "I confirm that I have reviewed sharing these titles and abstracts "
         "with the OpenAI API and any applicable costs.",
         value=False, key="review_screen_consent")
     st.caption(
-        "Only the first N ranked records are transmitted. "
-        "No API keys are included in exports or committed to GitHub. "
-        "API requests set store=false."
+        "Each batch processes the next N records in the current ranking; "
+        "repeat to continue. No API keys are included in exports or "
+        "committed to GitHub. API requests set store=false. "
+        "Raw model recommendations and safeguards are audited separately."
+    )
+    protocol = (criteria.strip(), openai_model.strip())
+    previous_protocol = st.session_state.get("review_ai_protocol")
+    if previous_protocol and previous_protocol != protocol:
+        st.warning(
+            "The criteria or model have changed. Starting another batch "
+            "will clear previous AI suggestions, but keep your separate "
+            "human decisions and the audit history."
+        )
+    if previous_protocol in (None, protocol):
+        pending_count = sum(r.uid not in ai for r in ordered)
+    else:
+        pending_count = len(ordered)
+    st.caption(
+        f"AI suggestions for {len(ai):,} / {len(ordered):,} records. "
+        f"{pending_count:,} records are awaiting AI screening "
+        "under the current protocol."
     )
     if st.button(
-        "Run OpenAI pre-screening",
-        disabled=not share or not openai_key.strip() or len(criteria.strip()) < 12,
+        "Screen next batch with OpenAI",
+        disabled=not share or not openai_key.strip()
+                 or len(criteria.strip()) < 12 or pending_count == 0,
         key="review_screen_start",
     ):
+        if previous_protocol != protocol:
+            st.session_state.review_ai = {}
+            ai = st.session_state.review_ai
+            st.session_state.review_ai_protocol = protocol
+        pending = [r for r in ordered if r.uid not in ai]
         bar = st.progress(0.0)
-        with st.spinner("Processing OpenAI structured outputs"):
+        with st.spinner("Processing structured PICO assessments"):
             result = screen_batch(
-                ordered, criteria=criteria, key=openai_key,
+                pending, criteria=criteria, key=openai_key,
                 model=openai_model.strip(), max_items=int(screen_limit),
-                progress=lambda n, total: bar.progress(n / total),
+                progress=lambda n, total: bar.progress(n / max(1, total)),
             )
         bar.empty()
-        st.session_state.review_ai.update(result.decisions)
+        ai.update(result.decisions)
         st.session_state.setdefault("review_screening_runs", []).append({
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "criteria": criteria,
             "model": result.model,
-            "prompt_protocol": "SearchBridge conservative title-abstract v1",
+            "prompt_protocol": "SearchBridge strict criterion-level v2",
+            "ranking": ranking_log,
             "attempted": result.attempted,
             "count_by_suggestion": dict(Counter(
                 x.get("decision") for x in result.decisions.values()
             )),
+            "raw_model_decisions": dict(Counter(
+                x.get("raw_model_decision") for x in result.decisions.values()
+            )),
+            "safeguard_downgrades": sum(
+                bool(x.get("safeguard_reasons"))
+                and x.get("raw_model_decision") != x.get("decision")
+                for x in result.decisions.values()
+            ),
             "errors": result.errors,
-            "note": "Only AI suggestions. Human decisions are separate.",
+            "note": "All AI results are advisory; independent human "
+                    "decisions are never overwritten.",
         })
-        for err in result.errors:
-            st.warning(err)
         st.success(
-            f"{result.attempted} records processed for prioritization. "
-            "All suggestions require human review."
+            f"Processed {result.attempted:,} new records. "
+            f"Total with AI suggestions: {len(ai):,}. "
+            "All require human verification."
         )
-        st.rerun()
-
     if ai:
         count = Counter(v.get("decision", "") for v in ai.values())
-        st.caption(
-            "OpenAI suggestions: "
-            f"{count.get('include',0)} Include, "
-            f"{count.get('exclude',0)} Exclude, "
-            f"{count.get('manual_review',0)} Manual review."
+        relevance = Counter(v.get("potential_relevance", "unknown")
+                            for v in ai.values())
+        downgraded = sum(
+            v.get("raw_model_decision") != v.get("decision")
+            for v in ai.values()
         )
-        with st.expander("OpenAI suggestions with evidence and uncertainty"):
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("AI Include candidates", count.get("include", 0))
+        m2.metric("AI Exclude candidates", count.get("exclude", 0))
+        m3.metric("Manual review required", count.get("manual_review", 0))
+        m4.metric("Safeguard downgrades", downgraded)
+        st.caption(
+            "Potential relevance (NOT inclusion): "
+            f"{relevance.get('high', 0)} High · "
+            f"{relevance.get('medium', 0)} Medium · "
+            f"{relevance.get('low', 0)} Low · "
+            f"{relevance.get('unknown', 0)} Unknown."
+        )
+        with st.expander("OpenAI suggestions: PICO evidence and safeguards"):
             st.dataframe([
-                _screening_row(r, ai, human)
+                _screening_row(r, ai, human, ranking_scores)
                 for r in ordered if r.uid in ai
             ], hide_index=True, use_container_width=True)
+    run_audit = st.session_state.get("review_screening_runs", [])
+    errors = [message for run in run_audit
+              if run.get("criteria") == criteria
+              and run.get("model") == openai_model
+              for message in run.get("errors", [])]
+    if errors:
+        with st.expander(f"API errors requiring manual review ({len(errors)})"):
+            for message in errors:
+                st.warning(message)
 
     st.markdown("#### 5 · Human title/abstract screening")
     st.caption(
