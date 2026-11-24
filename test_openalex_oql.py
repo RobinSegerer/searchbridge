@@ -14,7 +14,7 @@ class OpenAlexOQLTests(unittest.TestCase):
         self.assertIn('("college" and "student*" within 1 words of each other)', text)
         self.assertIn('("university" and "graduate*" within 1 words of each other)', text)
         self.assertIn("title-abstract-keywords has", text)
-        self.assertEqual(result["removed"], ["Unvollständig abbildbare Ovid-Feldcodes ['ab', 'kf', 'ti']."])
+        self.assertEqual(result["removed"], ["Ovid field codes without exact mappings: ['ab', 'kf', 'ti']."])
         self.assertFalse(result["validated_equivalence"])
 
     def test_adj3_wildcard_and_exact_phrase(self):
@@ -37,7 +37,7 @@ class OpenAlexOQLTests(unittest.TestCase):
         out = translate_openalex_oql(q)
         self.assertEqual(out["query"].count("within 2 words of each other"), 2)
         self.assertIn('("Web*" AND "platform*")', out["query"])
-        self.assertTrue(any("Web*" in loss and "breites AND" in loss for loss in out["removed"]))
+        self.assertTrue(any("Web*" in loss and "broad AND" in loss for loss in out["removed"]))
         self.assertFalse(out["validated_equivalence"])
 
     def test_heading_kept_as_unverified_freetext(self):
