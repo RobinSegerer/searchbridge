@@ -7,6 +7,8 @@ import zipfile
 from datetime import datetime, timezone
 
 import streamlit as st
+from PIL import Image
+from brand_logo import LOGO_WEBP, LOGO_DATA_URI
 import requests
 from urllib.parse import urlencode
 
@@ -28,20 +30,27 @@ from mesh_expansion import (
     labels_as_text as mesh_labels_as_text,
 )
 
-st.set_page_config(page_title="SearchBridge", page_icon="🔎", layout="wide")
+st.set_page_config(page_title="SearchBridge",
+                   page_icon=Image.open(io.BytesIO(LOGO_WEBP)), layout="wide")
 st.markdown(
     """<style>
     .block-container{max-width:1260px;padding-top:1.7rem}
-    .hero{background:linear-gradient(105deg,#173046,#136c79);padding:22px 28px;
+    .hero{background:linear-gradient(105deg,#173046,#136c79);padding:17px 23px;
       border-radius:15px;color:white;margin-bottom:22px}
+    .hero .brand{display:flex;align-items:center;gap:15px}
+    .hero .brand-logo{width:82px;height:82px;object-fit:contain;flex-shrink:0}
+    @media(max-width:640px){.hero .brand-logo{width:58px;height:58px}}
     .hero h1{color:white;margin:0;font-size:2.25rem}
     .hero p{color:#d9ecf0;margin:5px 0 0}
     </style>""", unsafe_allow_html=True
 )
 st.markdown(
-    '<div class="hero"><h1>SearchBridge</h1>'
+    '<div class="hero"><div class="brand"><img class="brand-logo" '
+    'alt="SearchBridge bird emblem" src="' + LOGO_DATA_URI + '"/>'
+    '<div><h1>SearchBridge</h1>'
     '<p>Ovid search translation · PubMed and RIS proximity verification</p>'
-    '<p>Rule-based by default · Optional OpenAI screening · Some data sources require API keys</p></div>',
+    '<p>Rule-based by default · Optional OpenAI screening · Some data sources require API keys</p>'
+    '</div></div></div>',
     unsafe_allow_html=True,
 )
 SAMPLE = """(
