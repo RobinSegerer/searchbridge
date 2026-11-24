@@ -36,18 +36,46 @@ SearchBridge is a Streamlit application for rule-based search strategy translati
    stages. Inspect the source completeness report and fuzzy duplicate
    candidates requiring manual review. The app uses its clearly named
    conservative Python DOI/PMID/title-year algorithm; **not ASySD**.
-5. Set a focused ranking topic. Ranking prioritizes human screening; it
-   does **not** exclude studies.
+5. Enter the research question and choose **Semantic: MiniLM bi-encoder
+   + cross-encoder** (the default), then click **Run semantic reranking**.
+   The bi-encoder `all-MiniLM-L6-v2` ranks *all* deduplicated records by
+   semantic similarity; the local MS MARCO MiniLM cross-encoder reranks the
+   highest-scoring candidates (200 by default, maximum 2,000).
+   Every record is retained. The lexical TF-IDF fallback is always available.
+   The first run downloads both ONNX models, which needs server memory/network.
 6. Optional: enter explicit PICO/PCC eligibility criteria and your **OpenAI
    API key**; consent to sending title/abstract metadata to the provider;
-   prescreen at most 60 prioritized records per run (default: GPT-6.1 Terra,
-   alternatives: GPT-6.2 Sol / GPT-6 Luna). **Review the complete abstract**
-   and record a separate human decision with rationale. The API requests
-   set `store=false`, but you must still assess
-   licensing, consent, privacy and retention conditions for your source data.
+   click **Screen next unscreened batch** to screen 1–60 additional prioritized
+   records per batch (20 by default), repeating as needed. AI output separately
+   provides a conservative preliminary Include/Exclude/Manual Review,
+   potential relevance, and a criterion-by-criterion assessment. Verbatim
+   quotation mismatch is flagged, not silently converted to Manual Review.
+   API failures are separately identified and are **not** negative findings.
+   **Review the complete abstract** and record independent human decisions.
+   API requests set `store=false`; assess costs, licensing, consent and privacy.
 7. Download the ZIP audit bundle before ending the Streamlit session.
    **Session state is not a durable database** and does not substitute
    for Covidence/Rayyan/ASReview or project storage.
+
+### Semantic ranking and branding
+
+The SearchBridge header displays the uploaded robin emblem stored in
+`assets/searchbridge-robin.svg`. This is an actual app asset, not the
+static dashboard concept image.
+
+The Review Pipeline uses **FastEmbed CPU ONNX** to run
+`sentence-transformers/all-MiniLM-L6-v2` and
+`Xenova/ms-marco-MiniLM-L-6-v2` locally. Ranking changes the order
+only; it does not exclude articles. The semantic similarity for every
+record, cross-encoder scores for reranked candidates, final order and
+method are exported in the screening CSV/ZIP audit. If model loading fails
+or the user has not run semantic ranking for the current query, the app
+explicitly identifies lexical TF-IDF as the active fallback.
+
+Only AI screening uses the optional OpenAI Responses API; it is separate
+from local embedding/reranking. Screening state is session-based and can
+be continued across successive batches, but it is **not** persisted
+between disconnected Streamlit sessions.
 
 ### Screening metadata and English-language interface
 

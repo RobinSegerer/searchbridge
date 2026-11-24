@@ -38,12 +38,16 @@ st.markdown(
     .hero p{color:#d9ecf0;margin:5px 0 0}
     </style>""", unsafe_allow_html=True
 )
-st.markdown(
-    '<div class="hero"><h1>SearchBridge</h1>'
-    '<p>Ovid search translation · PubMed and RIS proximity verification</p>'
-    '<p>Rule-based by default · Optional OpenAI screening · Some data sources require API keys</p></div>',
-    unsafe_allow_html=True,
-)
+logo_col, hero_col = st.columns([1, 11], vertical_alignment="center", gap="small")
+with logo_col:
+    st.image("assets/searchbridge-robin.svg", width=110)
+with hero_col:
+    st.markdown(
+        '<div class="hero"><h1>SearchBridge</h1>'
+        '<p>A toolkit for systematic searching and evidence synthesis</p>'
+        '<p>Search translation · Semantic reranking · Optional LLM screening · Human review</p></div>',
+        unsafe_allow_html=True,
+    )
 SAMPLE = """(
   ((College OR university) adj2 (student* OR graduate* OR undergraduate*)).ti,ab,kf.
   OR exp Students/

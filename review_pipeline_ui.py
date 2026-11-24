@@ -26,6 +26,20 @@ from review_retrieval import (
     RetrievalError, pubmed_search, openalex_search, scopus_search,
 )
 from openai_review_screening import screen_batch, DEFAULT_MODEL, SCREENING_MODELS
+from review_semantic_rank import (
+    semantic_rerank, BI_ENCODER_MODEL, CROSS_ENCODER_MODEL, MAX_CROSS_CANDIDATES,
+)
+
+
+@st.cache_resource(show_spinner=False)
+def _load_review_rank_models():
+    """Load both local ONNX models once per Streamlit server process."""
+    from fastembed import TextEmbedding
+    from fastembed.rerank.cross_encoder import TextCrossEncoder
+    return (
+        TextEmbedding(model_name=BI_ENCODER_MODEL),
+        TextCrossEncoder(model_name=CROSS_ENCODER_MODEL),
+    )
 
 
 def _record_fields(record) -> dict:
@@ -41,7 +55,7 @@ def _record_fields(record) -> dict:
     }
 
 
-def _screening_row(record, ai, overrides) -> dict:
+def _screening_row(record, ai, overrides, ranking_details=None) -> dict:
     human = overrides.get(record.uid, {})
     if isinstance(human, dict):
         human_decision = human.get("decision", "not_reviewed")
@@ -57,6 +71,10 @@ def _screening_row(record, ai, overrides) -> dict:
         "UID": record.uid,
         "Rank": record.rank_score,
         "AI suggestion": suggestion.get("decision", ""),
+        "Potential relevance": suggestion.get("potential_relevance", ""),
+        "Criteria assessment": suggestion.get("criteria_assessment", ""),
+        "Evidence verified": suggestion.get("evidence_verified", ""),
+        "AI origin": suggestion.get("origin", ""),
         "AI reason": suggestion.get("reason", ""),
         "AI evidence": suggestion.get("evidence", ""),
         "AI uncertainty": suggestion.get("uncertainty", ""),
@@ -64,10 +82,12 @@ def _screening_row(record, ai, overrides) -> dict:
         "Human reason": human_reason,
         "Reviewer": reviewer,
         "Reviewed UTC": reviewed_utc,
+        **(ranking_details or {}).get(record.uid, {}),
     }
 
 
-def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
+def _bundle(merge, ordered, search_log, ai, overrides, screening_runs,
+            ranking_details=None, ranking_method="lexical_title_weighted_tfidf") -> bytes:
     b = io.BytesIO()
     with zipfile.ZipFile(b, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("deduplicated.csv", csv_bytes(ordered, ai))
@@ -82,7 +102,7 @@ def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
             "per_source_counts": merge.counts,
             "fuzzy_review_count": len(merge.fuzzy_review),
             "searches": search_log,
-            "ranking": "within-sample title-weighted lexical TF-IDF cosine",
+            "ranking": ranking_method,
             "warning": "Counts are NOT a completed PRISMA diagram; "
                        "sample limits, source overlap, database coverage "
                        "and screening require human review.",
@@ -95,17 +115,17 @@ def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
                    _dict_csv(merge.fuzzy_review))
         # Screening exports are self-contained: metadata accompany every decision.
         z.writestr("screening_results.csv", _dict_csv([
-            _screening_row(r, ai, overrides) for r in ordered
+            _screening_row(r, ai, overrides, ranking_details) for r in ordered
         ]))
         z.writestr("human_decisions.csv", _dict_csv([
-            _screening_row(r, ai, overrides)
+            _screening_row(r, ai, overrides, ranking_details)
             for r in ordered if r.uid in overrides
         ]))
         if ai:
             z.writestr("ai_screening_suggestions.json",
                        json.dumps(ai, ensure_ascii=False, indent=2))
             z.writestr("ai_screening_suggestions.csv", _dict_csv([
-                _screening_row(r, ai, overrides)
+                _screening_row(r, ai, overrides, ranking_details)
                 for r in ordered if r.uid in ai
             ]))
         z.writestr("screening_criteria_and_run_audit.json",
@@ -346,6 +366,7 @@ def render() -> None:
                 st.session_state.review_ai = {}
                 st.session_state.review_human = {}
                 st.session_state.review_screening_runs = []
+                st.session_state.pop("review_semantic_result", None)
                 st.session_state.review_dedup_engine = engine
                 overall.progress(1.0, text="Retrieval and deduplication complete")
                 current.empty()
@@ -421,23 +442,92 @@ def render() -> None:
                          use_container_width=True)
 
     st.divider()
-    st.markdown("#### 3 · Ranking for screening prioritization")
+    st.markdown("#### 3 · Semantic reranking for screening prioritization")
+    st.caption(
+        "Research focus → bi-encoder for every record → cross-encoder for "
+        "the top candidates → optional LLM screening → independent human review. "
+        "**Ranking changes only the order; no records are excluded.**"
+    )
     focus = st.text_area(
-        "Research topic / target concept for ranking",
+        "Research question / topic for ranking",
         "social media use and academic self concept among university students",
         key="review_focus", height=75,
-        help="This ranking is lexical, not an "
-             "inclusion/exclusion decision."
+        help="Use a precise question or short eligibility summary. "
+             "Ranking does not decide whether a study is eligible."
     )
-    ordered = lexical_rank(records, focus)
-    st.caption(
-        "Title-weighted lexical TF-IDF cosine ranking. "
-        "A low score does NOT justify excluding a study "
-        "and no records are removed by ranking."
+    mode = st.radio(
+        "Ranking method",
+        ["Semantic: MiniLM bi-encoder + cross-encoder",
+         "Lexical: title-weighted TF-IDF"],
+        horizontal=True, key="review_rank_method",
     )
+    rank_details = {}
+    ranking_method = "within-sample title-weighted lexical TF-IDF cosine"
+    if mode.startswith("Semantic"):
+        st.caption(
+            f"Stage 1: {BI_ENCODER_MODEL} embeds all titles and abstracts. "
+            f"Stage 2: {CROSS_ENCODER_MODEL} reranks the top candidates. "
+            "Both models run locally on the server; the first run downloads "
+            "their weights. Larger batches can be slow on free-tier hosting."
+        )
+        cross_top_n = st.number_input(
+            "Candidates for cross-encoder reranking",
+            min_value=1, max_value=MAX_CROSS_CANDIDATES, value=200, step=50,
+            key="review_cross_top_n",
+        )
+        signature = (
+            tuple(r.uid for r in records), focus.strip(), int(cross_top_n)
+        )
+        if st.button("Run semantic reranking", key="review_run_semantic"):
+            bar = st.progress(0.0, text="Initializing semantic models")
+            try:
+                with st.spinner("Local bi-encoder and cross-encoder inference"):
+                    bi_model, cross_model = _load_review_rank_models()
+                    result = semantic_rerank(
+                        records, focus,
+                        embedding_model=bi_model, cross_encoder=cross_model,
+                        cross_top_n=int(cross_top_n),
+                        progress=lambda label, value: bar.progress(
+                            float(value), text=label
+                        ),
+                    )
+                st.session_state.review_semantic_result = {
+                    "signature": signature,
+                    "result": result,
+                }
+            except Exception as exc:
+                st.error(
+                    "Semantic ranking could not run; lexical ranking remains "
+                    f"available. Details: {type(exc).__name__}: {exc}"
+                )
+            finally:
+                bar.empty()
+        saved = st.session_state.get("review_semantic_result")
+        if saved and saved.get("signature") == signature:
+            semantic_result = saved["result"]
+            ordered = semantic_result.records
+            rank_details = semantic_result.details
+            ranking_method = semantic_result.method
+            st.success(
+                f"Semantic reranking complete: {len(ordered):,} records retained; "
+                f"{semantic_result.candidate_count:,} cross-encoder candidates."
+            )
+        else:
+            ordered = lexical_rank(records, focus)
+            st.info(
+                "Semantic ranking has not been run with these settings. "
+                "The current order is the lexical TF-IDF fallback. "
+                "Click 'Run semantic reranking' to activate both models."
+            )
+    else:
+        ordered = lexical_rank(records, focus)
+        st.caption(
+            "Lexical title-weighted TF-IDF cosine; titles count twice. "
+            "All retrieved records remain available."
+        )
     ai = st.session_state.setdefault("review_ai", {})
     human = st.session_state.setdefault("review_human", {})
-    items = [_screening_row(r, ai, human) for r in ordered[:300]]
+    items = [_screening_row(r, ai, human, rank_details) for r in ordered[:300]]
     st.dataframe(items, hide_index=True, use_container_width=True)
     if len(ordered) > 300:
         st.caption("Table preview limited to 300 records; exports contain all records.")
@@ -478,39 +568,54 @@ def render() -> None:
         )
     with q2:
         openai_key = st.text_input(
-            "OpenAI API-Key", type="password", key="review_openai_key")
+            "OpenAI API key", type="password", key="review_openai_key")
     with q3:
         screen_limit = st.number_input(
-            "Maximum records to pre-screen", min_value=1, max_value=60,
+            "Records per screening batch", min_value=1, max_value=60,
             value=20, step=5, key="review_screen_limit")
     share = st.checkbox(
         "I confirm that I have reviewed sharing these titles and abstracts "
         "with the OpenAI API and any applicable costs.",
         value=False, key="review_screen_consent")
+    pending_ai = [r for r in ordered if r.uid not in ai]
     st.caption(
-        "Only the first N ranked records are transmitted. "
-        "No API keys are included in exports or committed to GitHub. "
-        "API requests set store=false."
+        f"{len(ai):,} records already screened in this session; "
+        f"{len(pending_ai):,} awaiting AI screening. "
+        "Each click processes the next batch without repeating records. "
+        "No API keys are exported; requests set store=false."
     )
+    if ai and any(
+        x.get("criteria") not in (None, criteria.strip()) or
+        x.get("model") not in (None, openai_model)
+        for x in ai.values()
+    ):
+        st.warning(
+            "Existing AI suggestions used another model or eligibility "
+            "protocol. Check their criteria before combining decisions."
+        )
     if st.button(
-        "Run OpenAI pre-screening",
-        disabled=not share or not openai_key.strip() or len(criteria.strip()) < 12,
+        "Screen next unscreened batch",
+        disabled=(not pending_ai or not share or not openai_key.strip()
+                  or len(criteria.strip()) < 12),
         key="review_screen_start",
     ):
         bar = st.progress(0.0)
-        with st.spinner("Processing OpenAI structured outputs"):
+        with st.spinner("Processing OpenAI screening suggestions"):
             result = screen_batch(
-                ordered, criteria=criteria, key=openai_key,
-                model=openai_model.strip(), max_items=int(screen_limit),
+                pending_ai, criteria=criteria, key=openai_key,
+                model=openai_model.strip(),
+                max_items=min(int(screen_limit), len(pending_ai)),
                 progress=lambda n, total: bar.progress(n / total),
             )
         bar.empty()
+        for value in result.decisions.values():
+            value["criteria"] = criteria.strip()
         st.session_state.review_ai.update(result.decisions)
         st.session_state.setdefault("review_screening_runs", []).append({
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "criteria": criteria,
             "model": result.model,
-            "prompt_protocol": "SearchBridge conservative title-abstract v1",
+            "prompt_protocol": "SearchBridge criterion-by-criterion v2",
             "attempted": result.attempted,
             "count_by_suggestion": dict(Counter(
                 x.get("decision") for x in result.decisions.values()
@@ -528,15 +633,23 @@ def render() -> None:
 
     if ai:
         count = Counter(v.get("decision", "") for v in ai.values())
+        high = sum(x.get("potential_relevance") == "high" for x in ai.values())
+        api_failed = sum(x.get("origin") == "api_error" for x in ai.values())
         st.caption(
-            "OpenAI suggestions: "
+            "Provisional OpenAI suggestions: "
             f"{count.get('include',0)} Include, "
             f"{count.get('exclude',0)} Exclude, "
-            f"{count.get('manual_review',0)} Manual review."
+            f"{count.get('manual_review',0)} Manual review; "
+            f"{high} high potential relevance."
         )
-        with st.expander("OpenAI suggestions with evidence and uncertainty"):
+        if api_failed:
+            st.error(
+                f"{api_failed} records had API failures. Their Manual Review "
+                "labels are not LLM eligibility judgments."
+            )
+        with st.expander("OpenAI suggestions, criteria and uncertainty"):
             st.dataframe([
-                _screening_row(r, ai, human)
+                _screening_row(r, ai, human, rank_details)
                 for r in ordered if r.uid in ai
             ], hide_index=True, use_container_width=True)
 
@@ -608,9 +721,22 @@ def render() -> None:
                 )
                 st.markdown("**Model rationale:** "
                             + suggestion.get("reason", ""))
+                st.markdown(
+                    "**Potential relevance:** "
+                    + suggestion.get("potential_relevance", "unknown")
+                )
+                if suggestion.get("criteria_assessment"):
+                    st.markdown(
+                        "**Criterion-by-criterion assessment:** "
+                        + suggestion["criteria_assessment"]
+                    )
                 if suggestion.get("evidence"):
                     st.markdown("**Evidence in article text:** "
                                 + suggestion["evidence"])
+                if suggestion.get("review_note"):
+                    st.warning(suggestion["review_note"])
+                if suggestion.get("origin") == "api_error":
+                    st.error("API error: no LLM eligibility judgment was made.")
                 st.caption("Model: " + suggestion.get("model", ""))
         state = human.get(selected_uid, {})
         previous = (state.get("decision", "not_reviewed")
@@ -668,7 +794,7 @@ def render() -> None:
 
     with st.expander("Saved human decisions"):
         st.dataframe([
-            _screening_row(r, ai, human)
+            _screening_row(r, ai, human, rank_details)
             for r in ordered if _human_label(r.uid) != "not_reviewed"
         ], hide_index=True, use_container_width=True)
 
@@ -682,7 +808,7 @@ def render() -> None:
                            use_container_width=True)
     with c2:
         st.download_button("Screening results: CSV",
-                           _dict_csv([_screening_row(r, ai, human)
+                           _dict_csv([_screening_row(r, ai, human, rank_details)
                                       for r in ordered]),
                            "searchbridge_screening_results.csv", "text/csv",
                            use_container_width=True)
@@ -690,7 +816,8 @@ def render() -> None:
         st.download_button(
             "Audit + records + screening (ZIP)",
             _bundle(merged, ordered, search_log, ai, human,
-                    st.session_state.get("review_screening_runs", [])),
+                    st.session_state.get("review_screening_runs", []),
+                    ranking_details=rank_details, ranking_method=ranking_method),
             "searchbridge_review_pipeline.zip",
             "application/zip", use_container_width=True, type="primary")
     st.info(

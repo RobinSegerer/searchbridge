@@ -72,7 +72,7 @@ class TestPubMedTranslation(unittest.TestCase):
         self.assertIn('web[tiab]', r["query"])
         self.assertIn('website*[tiab]', r["query"])
         self.assertIn('Internet*[tiab]', r["query"])
-        self.assertTrue(any("NICHT vollständig äquivalent" in x for x in r["notes"]))
+        self.assertTrue(any("NOT fully equivalent" in x for x in r["notes"]))
 
     def test_unknown_short_prefix_requires_human_action(self):
         with self.assertRaises(PubMedConversionError):
