@@ -26,6 +26,7 @@ from review_retrieval import (
     RetrievalError, pubmed_search, openalex_search, scopus_search,
 )
 from openai_review_screening import screen_batch, DEFAULT_MODEL, SCREENING_MODELS
+from review_reranking import rerank_records, RerankError, BI_MODEL_ID, CROSS_MODEL_ID
 
 
 def _record_fields(record) -> dict:
@@ -41,7 +42,7 @@ def _record_fields(record) -> dict:
     }
 
 
-def _screening_row(record, ai, overrides) -> dict:
+def _screening_row(record, ai, overrides, ranking_scores=None) -> dict:
     human = overrides.get(record.uid, {})
     if isinstance(human, dict):
         human_decision = human.get("decision", "not_reviewed")
@@ -52,14 +53,25 @@ def _screening_row(record, ai, overrides) -> dict:
         human_decision = human or "not_reviewed"
         human_reason = reviewer = reviewed_utc = ""
     suggestion = ai.get(record.uid, {})
+    ranking = (ranking_scores or {}).get(record.uid, {})
+    criteria = suggestion.get("criterion_assessments") or []
     return {
         **_record_fields(record),
         "UID": record.uid,
         "Rank": record.rank_score,
+        "Lexical TF-IDF": record.rank_score,
+        "Bi-encoder cosine": ranking.get("bi_encoder_cosine", ""),
+        "Cross-encoder score": ranking.get("cross_encoder_score", ""),
+        "Ranking stage": ranking.get("ranking_stage", "lexical_only"),
         "AI suggestion": suggestion.get("decision", ""),
+        "Raw AI decision": suggestion.get("raw_model_decision", ""),
+        "Potential relevance": suggestion.get("potential_relevance", ""),
         "AI reason": suggestion.get("reason", ""),
         "AI evidence": suggestion.get("evidence", ""),
         "AI uncertainty": suggestion.get("uncertainty", ""),
+        "Criterion assessments": json.dumps(criteria, ensure_ascii=False),
+        "Safeguard reasons": "; ".join(suggestion.get("safeguard_reasons", [])),
+        "AI origin": suggestion.get("origin", ""),
         "Human decision": human_decision,
         "Human reason": human_reason,
         "Reviewer": reviewer,
@@ -67,7 +79,8 @@ def _screening_row(record, ai, overrides) -> dict:
     }
 
 
-def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
+def _bundle(merge, ordered, search_log, ai, overrides, screening_runs,
+            ranking_scores=None, ranking_log=None) -> bytes:
     b = io.BytesIO()
     with zipfile.ZipFile(b, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("deduplicated.csv", csv_bytes(ordered, ai))
@@ -82,7 +95,9 @@ def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
             "per_source_counts": merge.counts,
             "fuzzy_review_count": len(merge.fuzzy_review),
             "searches": search_log,
-            "ranking": "within-sample title-weighted lexical TF-IDF cosine",
+            "ranking": ranking_log or {
+                "method": "within-sample title-weighted lexical TF-IDF cosine"
+            },
             "warning": "Counts are NOT a completed PRISMA diagram; "
                        "sample limits, source overlap, database coverage "
                        "and screening require human review.",
@@ -95,17 +110,17 @@ def _bundle(merge, ordered, search_log, ai, overrides, screening_runs) -> bytes:
                    _dict_csv(merge.fuzzy_review))
         # Screening exports are self-contained: metadata accompany every decision.
         z.writestr("screening_results.csv", _dict_csv([
-            _screening_row(r, ai, overrides) for r in ordered
+            _screening_row(r, ai, overrides, ranking_scores) for r in ordered
         ]))
         z.writestr("human_decisions.csv", _dict_csv([
-            _screening_row(r, ai, overrides)
+            _screening_row(r, ai, overrides, ranking_scores)
             for r in ordered if r.uid in overrides
         ]))
         if ai:
             z.writestr("ai_screening_suggestions.json",
                        json.dumps(ai, ensure_ascii=False, indent=2))
             z.writestr("ai_screening_suggestions.csv", _dict_csv([
-                _screening_row(r, ai, overrides)
+                _screening_row(r, ai, overrides, ranking_scores)
                 for r in ordered if r.uid in ai
             ]))
         z.writestr("screening_criteria_and_run_audit.json",
@@ -347,6 +362,8 @@ def render() -> None:
                 st.session_state.review_human = {}
                 st.session_state.review_screening_runs = []
                 st.session_state.review_dedup_engine = engine
+                st.session_state.pop("review_rerank", None)
+                st.session_state.pop("review_ai_protocol", None)
                 overall.progress(1.0, text="Retrieval and deduplication complete")
                 current.empty()
                 steps_text.caption(
