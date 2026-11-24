@@ -94,9 +94,9 @@ class TestReviewCore(unittest.TestCase):
         )
         self.assertEqual(out.duplicates_removed, 1)
         for stage in (
-            "Identifier abgleichen",
-            "Metadaten zusammenführen",
-            "Ähnliche Titel prüfen",
+            "Matching identifiers",
+            "Merging metadata",
+            "Checking similar titles",
         ):
             self.assertTrue(
                 any(name == stage and done == total for name, done, total in calls),
@@ -297,6 +297,8 @@ class TestOpenAIScreen(unittest.TestCase):
                     "reason": "All criteria explicitly supported.",
                     "evidence": "survey of university students",
                     "uncertainty": "low",
+                    "potential_relevance": "high",
+                    "criteria_assessment": "Relevant population is described.",
                 }
                 return MockResponse({"output": [{
                     "type":"message", "content":[{
@@ -317,7 +319,7 @@ class TestOpenAIScreen(unittest.TestCase):
         self.assertEqual(s.sent["model"], "gpt-6.1-terra")
         self.assertEqual(s.sent["reasoning"]["effort"], "low")
 
-    def test_nonverbatim_model_evidence_requires_manual_review(self):
+    def test_nonverbatim_evidence_is_flagged_for_human_verification(self):
         class Session:
             def post(self, *args, **kwargs):
                 answer = {
@@ -325,6 +327,8 @@ class TestOpenAIScreen(unittest.TestCase):
                     "reason": "Wrong population",
                     "evidence": "Children were enrolled",
                     "uncertainty": "low",
+                    "potential_relevance": "high",
+                    "criteria_assessment": "Relevant population is described.",
                 }
                 return MockResponse({"output": [{
                     "type": "message", "content": [{
@@ -336,8 +340,10 @@ class TestOpenAIScreen(unittest.TestCase):
         result = screen_one(
             study, criteria="Include university student investigations",
             key="fake", session=Session())
-        self.assertEqual(result["decision"], "manual_review")
+        self.assertEqual(result["decision"], "exclude")
         self.assertEqual(result["uncertainty"], "high")
+        self.assertFalse(result["evidence_verified"])
+        self.assertIn("review_note", result)
 
     def test_refusal_not_false_exclusion(self):
         class Session:
