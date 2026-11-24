@@ -8,6 +8,33 @@ import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 import requests
 import streamlit as st
+from semantic_ranking import (load_fastembed_model, rerank_title_terms,
+    EmbeddingError, MAX_EMBED_CANDIDATES)
+
+@st.cache_resource(show_spinner=False)
+def _consensus_encoder():
+    return load_fastembed_model()
+
+@st.cache_data(ttl=3600, max_entries=24, show_spinner=False)
+def _hybrid_rows(rows, focus, mode, weight, score_key, label):
+    return rerank_title_terms(rows, focus=focus, encoder=_consensus_encoder(),
+        mode=mode, semantic_weight=weight, top_n=len(rows), term_key='Term',
+        score_key=score_key, base_rank_label=label)
+
+def apply_ranking(rows, focus, mode, weight, score_key, label):
+    if mode == 'Statistical' or not rows:
+        return rows
+    pool = rows[:MAX_EMBED_CANDIDATES]
+    if len(rows) > len(pool):
+        st.caption(f'Semantic ranking covers the top {len(pool)} of {len(rows)} statistical candidates; the remainder is retained below them.')
+    try:
+        with st.spinner('Computing local semantic ranking…'):
+            ranked = _hybrid_rows(pool, focus, mode.lower(), weight, score_key, label)
+        return ranked + [dict(r, **{'Rank':i, 'Semantic similarity':'', 'Semantic rank':'', label:i, 'Hybrid RRF':'', 'MMR score':''}) for i,r in enumerate(rows[len(pool):],len(pool)+1)]
+    except (EmbeddingError, ValueError) as exc:
+        st.warning(f'Semantic ranking unavailable; showing statistical ranking. {exc}')
+        return rows
+
 
 STOP = set("""a an the and or of in on for to with by from as at is are was were be been being
 this that these those it its their our we they have has had can could may might
@@ -160,6 +187,7 @@ def render():
                     papers,calls=retrieve(query,key,int(limit))
                 st.session_state["consensus_corpus"]=(query,papers,calls)
                 st.session_state.pop("consensus_mesh",None)
+                st.session_state.pop("consensus_focus",None)
                 for i in range(6):
                     st.session_state.pop(f"consensus_free_{i}",None)
                     st.session_state.pop(f"consensus_mesh_{i}",None)
@@ -178,6 +206,10 @@ def render():
     weight=st.slider("Title weight",1.0,4.0,2.0,key="consensus_weight")
     min_df=st.slider("Minimum document frequency",1,max(2,min(10,len(papers))),min(2,len(papers)),key="consensus_df")
     rows=rank_terms(papers,field,weight,min_df)
+    mode=st.radio("Ranking method",["Statistical","Semantic","Hybrid"],index=2,horizontal=True,key="consensus_rank_mode")
+    focus=st.text_input("Semantic target concept",value=q,key="consensus_focus",disabled=mode=="Statistical")
+    semantic_weight=st.slider("Semantic weight in hybrid ranking",0.0,1.0,0.6,0.05,key="consensus_sem_weight",disabled=mode!="Hybrid")
+    rows=apply_ranking(rows,focus,mode,semantic_weight,"Score","TF-IDF rank")
     st.markdown("#### Free-text candidates")
     st.dataframe(rows[:200],use_container_width=True)
     download("Export all ranked text terms",rows,"consensus_terms.csv")
@@ -192,6 +224,7 @@ def render():
     mesh=[]
     if "consensus_mesh" in st.session_state:
         mesh,matches,indexed=st.session_state["consensus_mesh"]
+        mesh=apply_ranking(mesh,focus,mode,semantic_weight,"Documents","Frequency rank")
         st.write(f"{sum(bool(m['PMID']) for m in matches)}/{len(papers)} matched; {indexed} with MeSH.")
         st.dataframe(mesh,use_container_width=True)
         with st.expander("Matching audit"):
@@ -220,4 +253,4 @@ def render():
         result="\nAND\n".join(blocks)
         st.code(result,language="text")
         st.download_button("Download draft query",result,"consensus_query.txt",key="consensus_query_dl")
-    st.caption("Ranking uses log term frequency, smoothed corpus IDF and adjustable title weight. No stemming or semantic reranking. Validate the draft against known relevant studies.")
+    st.caption("Ranking uses log term frequency, smoothed corpus IDF and adjustable title weight. Semantic ranking uses local MiniLM cosine similarity; hybrid ranking uses weighted reciprocal rank fusion (RRF). No additional API key. No stemming. Validate the draft against known relevant studies.")
