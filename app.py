@@ -25,6 +25,7 @@ from pubmed_proximity import (
     PubMedError, parsed_terms, build_pubmed_and_query, fetch_pubmed_candidates,
 )
 from harvesting_ui import render as render_harvesting
+from consensus_harvesting import render as render_consensus
 from review_pipeline_ui import render as render_review_pipeline
 from mesh_expansion import (
     MeSHError, find_exp_headings, expand_mesh_heading, ExplodedHeading,
@@ -162,9 +163,9 @@ def cached_mesh_expansion(name: str, qualifier: str):
     return expand_mesh_heading(ExplodedHeading(name, qualifier))
 
 
-translate_tab, pubmed_tab, ris_tab, harvest_tab, pipeline_tab, help_tab = st.tabs([
+translate_tab, pubmed_tab, ris_tab, harvest_tab, consensus_tab, pipeline_tab, help_tab = st.tabs([
     "Search String Translator", "PubMed Proximity Search",
-    "RIS Proximity Checker", "Term Harvesting", "Review Pipeline", "Help",
+    "RIS Proximity Checker", "Term Harvesting", "Consensus Term Harvesting", "Review Pipeline", "Help",
 ])
 
 with translate_tab:
@@ -699,6 +700,10 @@ with ris_tab:
 
 with harvest_tab:
     render_harvesting()
+
+
+with consensus_tab:
+    render_consensus()
 
 
 with pipeline_tab:
