@@ -24,7 +24,7 @@ class ExternalTranslationTests(unittest.TestCase):
         self.assertIn("+(+", s2["query"])
         self.assertIn(" | ", s2["query"])
         self.assertNotIn("ADJ2", s2["query"])
-        self.assertTrue(any("Feldbeschränkung" in x for x in s2["removed"]))
+        self.assertTrue(any("field limit" in x for x in s2["removed"]))
         self.assertIn("query.bibliographic", cr["url"])
         self.assertNotIn(" AND ", cr["query"])
         self.assertIn("exploratory", cr["mode"])
@@ -45,7 +45,7 @@ class ExternalTranslationTests(unittest.TestCase):
         q = '(education.ti. AND student*.ti,ab,kf.)'
         oa = translate_external(q)["OpenAlex"]
         self.assertIn("OQL", oa["endpoint"])
-        self.assertTrue(any("Unterschiedliche Suchfeldgrenzen" in x for x in oa["notes"]))
+        self.assertTrue(any("Different field boundaries" in x for x in oa["notes"]))
 
     def test_me_sh_expansion_is_just_free_text(self):
         q = '(exp Students/ OR exp "Self Concept"/)'
@@ -55,7 +55,7 @@ class ExternalTranslationTests(unittest.TestCase):
         self.assertIn('"Student Dropouts"', oa["query"])
         self.assertIn('"Students, Nursing"', oa["query"])
         self.assertIn('"Self Concept"', oa["query"])
-        self.assertTrue(any("FREITEXT" in x for x in oa["notes"]))
+        self.assertTrue(any("FREE TEXT" in x for x in oa["notes"]))
         self.assertIn('exp "Self Concept"/', oa["unverified"])
         self.assertNotIn("mesh:", oa["query"].lower())
 
@@ -64,7 +64,7 @@ class ExternalTranslationTests(unittest.TestCase):
         s2 = translate_external(q)["Semantic Scholar"]
         self.assertIn("wom*", s2["query"])
         self.assertNotIn("wom?n", s2["query"])
-        self.assertTrue(any("Wildcard" in x for x in s2["notes"]))
+        self.assertTrue(any("wildcard" in x.lower() for x in s2["notes"]))
         self.assertIn("bulk", s2["url"])
 
     def test_crossref_flatten_is_not_boolean(self):
@@ -73,7 +73,7 @@ class ExternalTranslationTests(unittest.TestCase):
         self.assertIn("juvenil", cr["query"])
         self.assertIn("adolescent", cr["source_terms"])
         self.assertIn("offend", cr["query"])
-        self.assertTrue(any("Boolesche" in x for x in cr["removed"]))
+        self.assertTrue(any("Boolean" in x for x in cr["removed"]))
         self.assertTrue(any("20%" in x for x in cr["notes"]))
         self.assertNotIn(" OR ", cr["query"])
         self.assertNotIn(" AND ", cr["query"])
@@ -111,7 +111,7 @@ And
         self.assertIn("Wom", result["OpenAlex"]["query"].title())
         self.assertTrue(result["OpenAlex"]["request_json"].startswith("{"))
         self.assertFalse(result["OpenAlex"]["proximity_preserved"])
-        self.assertTrue(any("breites AND" in x for x in result["OpenAlex"]["removed"]))
+        self.assertTrue(any("broad AND" in x for x in result["OpenAlex"]["removed"]))
         self.assertLess(len(result["Crossref"]["query"]), 150)
         self.assertEqual(len(result["Crossref"]["anchors"]), 3)
         self.assertGreater(result["Crossref"]["source_term_count"], 40)
