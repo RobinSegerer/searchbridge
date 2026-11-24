@@ -91,6 +91,9 @@ def semantic_rerank(
         raise ValueError("Cross-encoder returned a non-finite relevance score.")
     top = sorted(candidates, key=lambda r: (-cross_scores[r.uid], r.uid))
     ordered = top + semantic[limit:]
+    for record in ordered:
+        # Expose the bi-encoder cosine in existing ranking-score exports.
+        record.rank_score = round(similarities[record.uid], 6)
     if progress:
         progress("Finalizing semantic ranking and provenance", 0.96)
     details = {
