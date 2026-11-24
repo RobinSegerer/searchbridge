@@ -82,7 +82,7 @@ class CrossrefAndSemanticScholarTests(unittest.TestCase):
         self.assertNotIn("wom?n", r["query"])
         self.assertIn("(+self +concept*)", r["query"])
         self.assertIn('"drop out"', r["query"])
-        self.assertTrue(any("Bindestrich" in n for n in r["notes"]))
+        self.assertTrue(any("Hyphen" in n for n in r["notes"]))
         self.assertTrue(balanced(r["query"]))
 
     def test_semantic_scholar_not(self):
@@ -96,7 +96,7 @@ class CrossrefAndSemanticScholarTests(unittest.TestCase):
         r = translate_semantic_scholar(q)
         self.assertEqual(r["url"], "")
         self.assertIn("psychologystudies329longprefix", r["query"])
-        self.assertTrue(any("GET-URL" in n for n in r["notes"]))
+        self.assertTrue(any("GET URL" in n for n in r["notes"]))
         self.assertTrue(balanced(r["query"]))
 
 
