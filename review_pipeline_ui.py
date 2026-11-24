@@ -633,15 +633,23 @@ def render() -> None:
 
     if ai:
         count = Counter(v.get("decision", "") for v in ai.values())
+        high = sum(x.get("potential_relevance") == "high" for x in ai.values())
+        api_failed = sum(x.get("origin") == "api_error" for x in ai.values())
         st.caption(
-            "OpenAI suggestions: "
+            "Provisional OpenAI suggestions: "
             f"{count.get('include',0)} Include, "
             f"{count.get('exclude',0)} Exclude, "
-            f"{count.get('manual_review',0)} Manual review."
+            f"{count.get('manual_review',0)} Manual review; "
+            f"{high} high potential relevance."
         )
-        with st.expander("OpenAI suggestions with evidence and uncertainty"):
+        if api_failed:
+            st.error(
+                f"{api_failed} records had API failures. Their Manual Review "
+                "labels are not LLM eligibility judgments."
+            )
+        with st.expander("OpenAI suggestions, criteria and uncertainty"):
             st.dataframe([
-                _screening_row(r, ai, human)
+                _screening_row(r, ai, human, rank_details)
                 for r in ordered if r.uid in ai
             ], hide_index=True, use_container_width=True)
 
@@ -713,9 +721,22 @@ def render() -> None:
                 )
                 st.markdown("**Model rationale:** "
                             + suggestion.get("reason", ""))
+                st.markdown(
+                    "**Potential relevance:** "
+                    + suggestion.get("potential_relevance", "unknown")
+                )
+                if suggestion.get("criteria_assessment"):
+                    st.markdown(
+                        "**Criterion-by-criterion assessment:** "
+                        + suggestion["criteria_assessment"]
+                    )
                 if suggestion.get("evidence"):
                     st.markdown("**Evidence in article text:** "
                                 + suggestion["evidence"])
+                if suggestion.get("review_note"):
+                    st.warning(suggestion["review_note"])
+                if suggestion.get("origin") == "api_error":
+                    st.error("API error: no LLM eligibility judgment was made.")
                 st.caption("Model: " + suggestion.get("model", ""))
         state = human.get(selected_uid, {})
         previous = (state.get("decision", "not_reviewed")
@@ -773,7 +794,7 @@ def render() -> None:
 
     with st.expander("Saved human decisions"):
         st.dataframe([
-            _screening_row(r, ai, human)
+            _screening_row(r, ai, human, rank_details)
             for r in ordered if _human_label(r.uid) != "not_reviewed"
         ], hide_index=True, use_container_width=True)
 
@@ -787,7 +808,7 @@ def render() -> None:
                            use_container_width=True)
     with c2:
         st.download_button("Screening results: CSV",
-                           _dict_csv([_screening_row(r, ai, human)
+                           _dict_csv([_screening_row(r, ai, human, rank_details)
                                       for r in ordered]),
                            "searchbridge_screening_results.csv", "text/csv",
                            use_container_width=True)
@@ -795,7 +816,8 @@ def render() -> None:
         st.download_button(
             "Audit + records + screening (ZIP)",
             _bundle(merged, ordered, search_log, ai, human,
-                    st.session_state.get("review_screening_runs", [])),
+                    st.session_state.get("review_screening_runs", []),
+                    ranking_details=rank_details, ranking_method=ranking_method),
             "searchbridge_review_pipeline.zip",
             "application/zip", use_container_width=True, type="primary")
     st.info(
