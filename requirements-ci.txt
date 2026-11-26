@@ -1,1 +1,2 @@
 requests>=2.31,<3
+simplemma>=1.1,<2
