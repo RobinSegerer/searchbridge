@@ -3,7 +3,7 @@
 Direct data source APIs: PubMed, OpenAlex OQL, Scopus (key).
 Other database exports: multi-file RIS (e.g. PsycINFO, WoS, Embase).
 Merge + DOI/PMID/title-year conservative dedup + TF-IDF ranking.
-Optional OpenAI screening requires explicit consent and user API key.
+Manual screening only; no OpenAI API calls.
 No autonomous inclusion/exclusion; manual decisions are stored separately.
 """
 from __future__ import annotations
@@ -16,6 +16,7 @@ import json
 import zipfile
 
 import streamlit as st
+from server_secrets import secret, status, redact
 
 from ris_proximity import parse_ris
 from review_core import (
@@ -25,7 +26,6 @@ from review_core import (
 from review_retrieval import (
     RetrievalError, pubmed_search, openalex_search, scopus_search,
 )
-from openai_review_screening import screen_batch, DEFAULT_MODEL, SCREENING_MODELS
 from review_semantic_rank import (
     semantic_rerank, BI_ENCODER_MODEL, CROSS_ENCODER_MODEL, MAX_CROSS_CANDIDATES,
 )
@@ -65,19 +65,10 @@ def _screening_row(record, ai, overrides, ranking_details=None) -> dict:
     else:
         human_decision = human or "not_reviewed"
         human_reason = reviewer = reviewed_utc = ""
-    suggestion = ai.get(record.uid, {})
     return {
         **_record_fields(record),
         "UID": record.uid,
         "Rank": record.rank_score,
-        "AI suggestion": suggestion.get("decision", ""),
-        "Potential relevance": suggestion.get("potential_relevance", ""),
-        "Criteria assessment": suggestion.get("criteria_assessment", ""),
-        "Evidence verified": suggestion.get("evidence_verified", ""),
-        "AI origin": suggestion.get("origin", ""),
-        "AI reason": suggestion.get("reason", ""),
-        "AI evidence": suggestion.get("evidence", ""),
-        "AI uncertainty": suggestion.get("uncertainty", ""),
         "Human decision": human_decision,
         "Human reason": human_reason,
         "Reviewer": reviewer,
@@ -90,7 +81,7 @@ def _bundle(merge, ordered, search_log, ai, overrides, screening_runs,
             ranking_details=None, ranking_method="lexical_title_weighted_tfidf") -> bytes:
     b = io.BytesIO()
     with zipfile.ZipFile(b, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("deduplicated.csv", csv_bytes(ordered, ai))
+        z.writestr("deduplicated.csv", csv_bytes(ordered))
         z.writestr("deduplicated.ris", ris_bytes(ordered))
         z.writestr("deduplicated.json", as_json(ordered))
         audit = {
@@ -121,15 +112,6 @@ def _bundle(merge, ordered, search_log, ai, overrides, screening_runs,
             _screening_row(r, ai, overrides, ranking_details)
             for r in ordered if r.uid in overrides
         ]))
-        if ai:
-            z.writestr("ai_screening_suggestions.json",
-                       json.dumps(ai, ensure_ascii=False, indent=2))
-            z.writestr("ai_screening_suggestions.csv", _dict_csv([
-                _screening_row(r, ai, overrides, ranking_details)
-                for r in ordered if r.uid in ai
-            ]))
-        z.writestr("screening_criteria_and_run_audit.json",
-                   json.dumps(screening_runs, ensure_ascii=False, indent=2))
     return b.getvalue()
 
 
@@ -186,14 +168,16 @@ def render() -> None:
                 "Maximum publications per API", min_value=1,
                 max_value=2000, value=100, step=25)
         with opts[1]:
-            pubmed_email = st.text_input("NCBI email (optional)")
-            pubmed_key = st.text_input("NCBI API key", type="password")
+            pubmed_email = secret("NCBI_EMAIL")
+            pubmed_key = secret("NCBI_API_KEY")
+            st.caption("NCBI: " + status("NCBI_API_KEY"))
         with opts[2]:
-            openalex_key = st.text_input("OpenAlex API key", type="password")
+            openalex_key = secret("OPENALEX_API_KEY")
+            st.caption("OpenAlex: " + status("OPENALEX_API_KEY"))
         with opts[3]:
-            scopus_key = st.text_input("Scopus API key", type="password")
-            scopus_token = st.text_input(
-                "Scopus institutional token (optional)", type="password")
+            scopus_key = secret("SCOPUS_API_KEY")
+            st.caption("Scopus: " + status("SCOPUS_API_KEY"))
+            scopus_token = secret("SCOPUS_INST_TOKEN")
         submitted = st.form_submit_button(
             "Search databases and merge records", type="primary",
             key="review_fetch_and_merge")
@@ -291,15 +275,15 @@ def render() -> None:
                             "total_hits": result.total,
                             "retrieved": len(result.records),
                             "complete": result.complete,
-                            "warning": result.warning,
+                            "warning": redact(result.warning) if result.warning else "",
                             "status": "success",
                         })
                     except (RetrievalError, ValueError) as exc:
-                        failures.append(f"{enabled_source}: {exc}")
+                        failures.append(f"{enabled_source}: {redact(exc)}")
                         audit.append({
                             "source": enabled_source,
                             "query": original_query.strip(),
-                            "status": "failed", "error": str(exc),
+                            "status": "failed", "error": redact(exc),
                             "complete": False, "retrieved": 0,
                         })
                 source_progress(job_index, enabled_source, 1, 1)
@@ -363,9 +347,7 @@ def render() -> None:
                     "complete": True,
                 })
                 st.session_state.review_data = (merged, audit)
-                st.session_state.review_ai = {}
                 st.session_state.review_human = {}
-                st.session_state.review_screening_runs = []
                 st.session_state.pop("review_semantic_result", None)
                 st.session_state.review_dedup_engine = engine
                 overall.progress(1.0, text="Retrieval and deduplication complete")
@@ -445,7 +427,7 @@ def render() -> None:
     st.markdown("#### 3 · Semantic reranking for screening prioritization")
     st.caption(
         "Research focus → bi-encoder for every record → cross-encoder for "
-        "the top candidates → optional LLM screening → independent human review. "
+        "the top candidates → independent human review. "
         "**Ranking changes only the order; no records are excluded.**"
     )
     focus = st.text_area(
@@ -525,7 +507,7 @@ def render() -> None:
             "Lexical title-weighted TF-IDF cosine; titles count twice. "
             "All retrieved records remain available."
         )
-    ai = st.session_state.setdefault("review_ai", {})
+    ai = {}
     human = st.session_state.setdefault("review_human", {})
     items = [_screening_row(r, ai, human, rank_details) for r in ordered[:300]]
     st.dataframe(items, hide_index=True, use_container_width=True)
@@ -533,131 +515,10 @@ def render() -> None:
         st.caption("Table preview limited to 300 records; exports contain all records.")
 
     st.divider()
-    st.markdown("#### 4 · Optional OpenAI title/abstract screening")
-    st.warning(
-        "OpenAI screening is **prioritization**, not an automatic "
-        "review decision. Titles and abstracts are sent to the OpenAI API "
-        "and API charges may apply. "
-        "Only records with sufficient context should be used. "
-        "Records without abstracts should receive MANUAL REVIEW. "
-        "For licensed records (e.g. Scopus), sharing permissions "
-        "must also be checked."
-    )
-    criteria = st.text_area(
-        "Eligibility criteria / PICO / PCC (explicit and operationalized)",
-        value="",
-        placeholder=("Describe every mandatory inclusion criterion "
-                     "and explicit exclusion criteria (PICO/PCC). "
-                     "Only clearly unmet criteria justify "
-                     "a suggestion to exclude."),
-        height=125, key="review_eligibility",
-    )
-    q1, q2, q3 = st.columns([1, 1, 1])
-    with q1:
-        openai_model = st.selectbox(
-            "OpenAI model",
-            options=list(SCREENING_MODELS.values()),
-            index=list(SCREENING_MODELS.values()).index(DEFAULT_MODEL),
-            format_func=lambda m: next(
-                (name + " · " + m for name, value in SCREENING_MODELS.items()
-                 if value == m), m),
-            key="review_openai_model",
-            help="Terra is the default. Sol is suited to more complex "
-                 "cases; Luna to cost-sensitive larger samples. "
-                 "Availability depends on API access."
-        )
-    with q2:
-        openai_key = st.text_input(
-            "OpenAI API key", type="password", key="review_openai_key")
-    with q3:
-        screen_limit = st.number_input(
-            "Records per screening batch", min_value=1, max_value=60,
-            value=20, step=5, key="review_screen_limit")
-    share = st.checkbox(
-        "I confirm that I have reviewed sharing these titles and abstracts "
-        "with the OpenAI API and any applicable costs.",
-        value=False, key="review_screen_consent")
-    pending_ai = [r for r in ordered if r.uid not in ai]
-    st.caption(
-        f"{len(ai):,} records already screened in this session; "
-        f"{len(pending_ai):,} awaiting AI screening. "
-        "Each click processes the next batch without repeating records. "
-        "No API keys are exported; requests set store=false."
-    )
-    if ai and any(
-        x.get("criteria") not in (None, criteria.strip()) or
-        x.get("model") not in (None, openai_model)
-        for x in ai.values()
-    ):
-        st.warning(
-            "Existing AI suggestions used another model or eligibility "
-            "protocol. Check their criteria before combining decisions."
-        )
-    if st.button(
-        "Screen next unscreened batch",
-        disabled=(not pending_ai or not share or not openai_key.strip()
-                  or len(criteria.strip()) < 12),
-        key="review_screen_start",
-    ):
-        bar = st.progress(0.0)
-        with st.spinner("Processing OpenAI screening suggestions"):
-            result = screen_batch(
-                pending_ai, criteria=criteria, key=openai_key,
-                model=openai_model.strip(),
-                max_items=min(int(screen_limit), len(pending_ai)),
-                progress=lambda n, total: bar.progress(n / total),
-            )
-        bar.empty()
-        for value in result.decisions.values():
-            value["criteria"] = criteria.strip()
-        st.session_state.review_ai.update(result.decisions)
-        st.session_state.setdefault("review_screening_runs", []).append({
-            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-            "criteria": criteria,
-            "model": result.model,
-            "prompt_protocol": "SearchBridge criterion-by-criterion v2",
-            "attempted": result.attempted,
-            "count_by_suggestion": dict(Counter(
-                x.get("decision") for x in result.decisions.values()
-            )),
-            "errors": result.errors,
-            "note": "Only AI suggestions. Human decisions are separate.",
-        })
-        for err in result.errors:
-            st.warning(err)
-        st.success(
-            f"{result.attempted} records processed for prioritization. "
-            "All suggestions require human review."
-        )
-        st.rerun()
-
-    if ai:
-        count = Counter(v.get("decision", "") for v in ai.values())
-        high = sum(x.get("potential_relevance") == "high" for x in ai.values())
-        api_failed = sum(x.get("origin") == "api_error" for x in ai.values())
-        st.caption(
-            "Provisional OpenAI suggestions: "
-            f"{count.get('include',0)} Include, "
-            f"{count.get('exclude',0)} Exclude, "
-            f"{count.get('manual_review',0)} Manual review; "
-            f"{high} high potential relevance."
-        )
-        if api_failed:
-            st.error(
-                f"{api_failed} records had API failures. Their Manual Review "
-                "labels are not LLM eligibility judgments."
-            )
-        with st.expander("OpenAI suggestions, criteria and uncertainty"):
-            st.dataframe([
-                _screening_row(r, ai, human, rank_details)
-                for r in ordered if r.uid in ai
-            ], hide_index=True, use_container_width=True)
-
-    st.markdown("#### 5 · Human title/abstract screening")
+    st.markdown("#### 4 · Human title/abstract screening")
     st.caption(
         "Every final decision must be based on the displayed title "
-        "and full abstract. The OpenAI assessment is "
-        "an independent suggestion, never a preselected decision."
+        "and full abstract. No AI assessment is made."
     )
     def _human_label(uid):
         state = human.get(uid, "not_reviewed")
@@ -711,33 +572,6 @@ def render() -> None:
                 "Check the original publication and consider "
                 "selecting 'Manual Review'."
             )
-        suggestion = ai.get(selected_uid)
-        if suggestion:
-            with st.expander("OpenAI suggestion – not binding", expanded=True):
-                st.markdown(
-                    "**Suggestion:** " + suggestion.get("decision", "unknown")
-                    + " · **Uncertainty:** "
-                    + suggestion.get("uncertainty", "unknown")
-                )
-                st.markdown("**Model rationale:** "
-                            + suggestion.get("reason", ""))
-                st.markdown(
-                    "**Potential relevance:** "
-                    + suggestion.get("potential_relevance", "unknown")
-                )
-                if suggestion.get("criteria_assessment"):
-                    st.markdown(
-                        "**Criterion-by-criterion assessment:** "
-                        + suggestion["criteria_assessment"]
-                    )
-                if suggestion.get("evidence"):
-                    st.markdown("**Evidence in article text:** "
-                                + suggestion["evidence"])
-                if suggestion.get("review_note"):
-                    st.warning(suggestion["review_note"])
-                if suggestion.get("origin") == "api_error":
-                    st.error("API error: no LLM eligibility judgment was made.")
-                st.caption("Model: " + suggestion.get("model", ""))
         state = human.get(selected_uid, {})
         previous = (state.get("decision", "not_reviewed")
                     if isinstance(state, dict) else state)
@@ -799,7 +633,7 @@ def render() -> None:
         ], hide_index=True, use_container_width=True)
 
     st.divider()
-    st.markdown("#### 6 · Reproducible export")
+    st.markdown("#### 5 · Reproducible export")
     c1, c2, c3 = st.columns(3)
     with c1:
         st.download_button("Deduplicated: RIS", ris_bytes(ordered),
@@ -816,13 +650,13 @@ def render() -> None:
         st.download_button(
             "Audit + records + screening (ZIP)",
             _bundle(merged, ordered, search_log, ai, human,
-                    st.session_state.get("review_screening_runs", []),
+                    [],
                     ranking_details=rank_details, ranking_method=ranking_method),
             "searchbridge_review_pipeline.zip",
             "application/zip", use_container_width=True, type="primary")
     st.info(
         "The ZIP contains the complete deduplicated record list, "
         "source log, deduplication audit, potential duplicate list, "
-        "the full screening results table, AI suggestions, and human decisions. "
+        "the full screening results table and human decisions. "
         "This does not automatically create a complete PRISMA flowchart."
     )
