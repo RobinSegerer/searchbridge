@@ -9,7 +9,10 @@ on:
       - review_pipeline_ui.py
       - review_retrieval.py
       - review_core.py
-      - openai_review_screening.py
+      - consensus_harvesting.py
+      - auto_query.py
+      - server_secrets.py
+      - requirements.txt
 
 jobs:
   streamlit:
@@ -74,10 +77,9 @@ jobs:
               "full smoke-test abstract" in str(item.value)
               for item in result.markdown
           ), "Full abstract is not visible in human review UI"
-          assert result.session_state["review_openai_model"] == "gpt-6.1-terra", (
-              "Default screening model must be GPT-6.1 Terra"
-          )
-          print("Human review full abstract and Terra default verified")
+          assert not any("OpenAI API key" in str(item.label) for item in result.text_input)
+          assert not any("API key" in str(item.label) for item in result.text_input)
+          print("Human review full abstract and no API key input verified")
 
           # Simulate a PubMed API source with page-by-page progress. No real
           # network requests and no R packages are required for this UI check.
