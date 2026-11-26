@@ -256,7 +256,7 @@ with translate_tab:
                                     payload = response.json()
                                 data = payload.get("esearchresult") or {}
                                 if data.get("error"):
-                                    st.error(str(data["error"]))
+                                    st.error(redact(data["error"]))
                                 else:
                                     st.success(
                                         f"PubMed ESearch: "
@@ -320,6 +320,7 @@ with translate_tab:
                                     response = requests.post(
                                         "https://api.openalex.org/query",
                                         json={"oql": item["query"]},
+                                        headers=({"Authorization": "Bearer " + secret("OPENALEX_API_KEY")} if secret("OPENALEX_API_KEY") else {}),
                                         timeout=60)
                                     response.raise_for_status()
                                     validation = response.json().get("validation", {})
@@ -330,9 +331,9 @@ with translate_tab:
                                             "to MEDLINE or additional retrieval recall.")
                                     else:
                                         st.error("OpenAlex reports syntax or validation problems.")
-                                        st.json(validation)
+                                        st.json(redact(json.dumps(validation, ensure_ascii=False)))
                                 except (requests.RequestException, ValueError) as exc:
-                                    st.error(f"OpenAlex syntax validation unavailable: {exc}")
+                                    st.error(f"OpenAlex syntax validation unavailable: {redact(exc)}")
                 if item.get("url"):
                     if name == "PubMed":
                         st.link_button("Open PubMed search", item["url"])
@@ -433,7 +434,7 @@ with translate_tab:
                                             f"{redact(response.text[:500])}"
                                         )
                                 except (requests.RequestException, ValueError) as exc:
-                                    st.error(f"S2 live test failed: {exc}")
+                                    st.error(f"S2 live test failed: {redact(exc)}")
                     else:
                         st.error(
                             "The API URL is too long. This complete query "
@@ -625,7 +626,7 @@ with pubmed_tab:
             st.success(f"Downloaded {retrieval.fetched:,} of "
                        f"{retrieval.candidate_count:,} PubMed candidates.")
         except (PubMedError, ValueError) as exc:
-            st.error(f"PubMed API request failed: {exc}")
+            st.error(f"PubMed API request failed: {redact(exc)}")
         finally:
             bar.empty()
     if "pubmed_data" in st.session_state:
