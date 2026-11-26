@@ -12,6 +12,7 @@ import zipfile
 from datetime import datetime, timezone
 
 import streamlit as st
+from server_secrets import secret, status, redact
 
 from pubmed_proximity import PubMedError, fetch_pubmed_candidates
 from ris_proximity import parse_ris, ris_bytes
@@ -94,10 +95,11 @@ def render() -> None:
                 "Maximum publications to retrieve", min_value=1,
                 max_value=10000, value=500, step=100, key="harvest_limit")
         with c2:
-            email = st.text_input("NCBI email (optional)", key="harvest_email")
+            email = secret("NCBI_EMAIL")
+            st.caption("NCBI email configured" if email else "NCBI email optional")
         with c3:
-            api_key = st.text_input(
-                "NCBI API key (optional)", type="password", key="harvest_key")
+            api_key = secret("NCBI_API_KEY")
+            st.caption(status("NCBI_API_KEY"))
         fetch = st.form_submit_button(
             "Retrieve from PubMed", type="primary")
 
