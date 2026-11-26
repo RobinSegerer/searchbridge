@@ -8,6 +8,8 @@ import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 import requests
 import streamlit as st
+from server_secrets import secret, status
+from auto_query import suggest_concepts, group_text, select_terms, format_block, build_query
 from semantic_ranking import (load_fastembed_model, rerank_title_terms,
     EmbeddingError, MAX_EMBED_CANDIDATES)
 
@@ -110,11 +112,13 @@ def pubmed_request(session, endpoint, params):
     r.raise_for_status()
     return r
 
-def mesh_match(papers, progress, email=""):
+def mesh_match(papers, progress, email="", api_key=""):
     matches, headings, major, sources = [], Counter(), Counter(), defaultdict(list)
     indexed=0
     with requests.Session() as session:
         common={"email":email} if email else {}
+        if api_key:
+            common["api_key"]=api_key
         for i,p in enumerate(papers,1):
             title=p.get("title") or ""
             doi=doi_norm(p.get("doi"))
@@ -175,12 +179,14 @@ def render():
     st.caption("Exploratory seed corpus; no LLM generation. Official MeSH requires a separate, free PubMed lookup.")
     with st.form("consensus_seed"):
         query=st.text_area("Research question",height=90)
-        key=st.text_input("Consensus API key",type="password")
-        limit=st.number_input("Maximum seed papers",min_value=5,max_value=100,value=50)
+        key=secret("CONSENSUS_API_KEY")
+        st.caption("Consensus: "+status("CONSENSUS_API_KEY"))
+        limit=st.number_input("Maximum seed papers",min_value=5,max_value=100,value=30)
+        auto_mesh=st.checkbox("Automatically match papers in PubMed and harvest assigned MeSH",value=True)
         submitted=st.form_submit_button("Retrieve Consensus papers",type="primary")
     if submitted:
         if not query.strip() or not key.strip():
-            st.warning("Enter a research question and API key.")
+            st.warning("Enter a research question. The CONSENSUS_API_KEY must be configured in server secrets.")
         else:
             try:
                 with st.spinner("Retrieving Consensus papers…"):
@@ -188,6 +194,15 @@ def render():
                 st.session_state["consensus_corpus"]=(query,papers,calls)
                 st.session_state.pop("consensus_mesh",None)
                 st.session_state.pop("consensus_focus",None)
+                for k in ("consensus_auto_concepts","consensus_auto_result","consensus_auto_editor","consensus_auto_signature"):
+                    st.session_state.pop(k,None)
+                if papers and auto_mesh:
+                    with st.spinner("Matching Consensus seeds against PubMed…"):
+                        bar=st.progress(0.0)
+                        try:
+                            st.session_state["consensus_mesh"]=mesh_match(papers,bar.progress,secret("NCBI_EMAIL"),secret("NCBI_API_KEY"))
+                        finally:
+                            bar.empty()
                 for i in range(6):
                     st.session_state.pop(f"consensus_free_{i}",None)
                     st.session_state.pop(f"consensus_mesh_{i}",None)
@@ -214,11 +229,12 @@ def render():
     st.dataframe(rows[:200],use_container_width=True)
     download("Export all ranked text terms",rows,"consensus_terms.csv")
     st.markdown("#### Assigned MeSH descriptors")
-    email=st.text_input("NCBI email (optional)",key="consensus_email")
+    email=secret("NCBI_EMAIL")
+    st.caption("NCBI: "+status("NCBI_API_KEY"))
     if st.button("Match seed papers in PubMed",key="consensus_match"):
         bar=st.progress(0.0)
         try:
-            st.session_state["consensus_mesh"]=mesh_match(papers,bar.progress,email)
+            st.session_state["consensus_mesh"]=mesh_match(papers,bar.progress,email,secret("NCBI_API_KEY"))
         finally:
             bar.empty()
     mesh=[]
@@ -231,7 +247,8 @@ def render():
             st.dataframe(matches,use_container_width=True)
         download("Export MeSH ranking",mesh,"consensus_mesh.csv")
         download("Export matching audit",matches,"consensus_matches.csv")
-    st.markdown("#### Build an initial PubMed query")
+    render_auto(q,papers,weight,min_df,st.session_state.get("consensus_mesh",([],[],0))[0])
+    st.markdown("#### Manual PubMed query builder")
     count=st.number_input("Number of concept blocks",1,6,2,key="consensus_block_count")
     blocks=[]
     for i in range(int(count)):
@@ -253,4 +270,72 @@ def render():
         result="\nAND\n".join(blocks)
         st.code(result,language="text")
         st.download_button("Download draft query",result,"consensus_query.txt",key="consensus_query_dl")
-    st.caption("Ranking uses log term frequency, smoothed corpus IDF and adjustable title weight. Semantic ranking uses local MiniLM cosine similarity; hybrid ranking uses weighted reciprocal rank fusion (RRF). No additional API key. No stemming. Validate the draft against known relevant studies.")
+    st.caption("Ranking uses log term frequency, smoothed corpus IDF and adjustable title weight. Semantic ranking uses local MiniLM cosine similarity; hybrid ranking uses weighted reciprocal rank fusion (RRF). No additional API key. The automatic builder additionally groups English lemmas and compresses observed inflections. Validate both drafts against known relevant studies.")
+
+
+def render_auto(question,papers,title_weight,min_df,mesh):
+    st.markdown("#### Automatic compact search strategy")
+    st.caption("Observed title/abstract terms and assigned MeSH only. Suggested concept boundaries and semantic relevance are heuristic, not eligibility decisions.")
+    labels=st.text_area("Concept blocks (one per line; edit the automatic suggestions)",
+        value="\n".join(suggest_concepts(question)),key="consensus_auto_concepts",height=100)
+    concepts=list(dict.fromkeys(x.strip() for x in labels.splitlines() if x.strip()))[:6]
+    c1,c2,c3=st.columns(3)
+    with c1:
+        text_n=st.number_input("Text families per concept",1,15,6,key="consensus_auto_text_n")
+    with c2:
+        mesh_n=st.number_input("MeSH per concept",0,10,3,key="consensus_auto_mesh_n")
+    with c3:
+        use_semantic=st.checkbox("Local semantic expansion",value=True,key="consensus_auto_semantic")
+    if not mesh:
+        st.info("No verified MeSH descriptors yet. Match seed papers in PubMed to add controlled vocabulary.")
+    if len(concepts)==1:
+        st.warning("Only one concept block was inferred. Review the question and add independent concepts if needed.")
+    sig=(tuple(concepts),int(text_n),int(mesh_n),use_semantic,title_weight,min_df,tuple((r["Term"],r["Documents"],r.get("Major topic",0)) for r in mesh))
+    regenerate=st.button("Generate / regenerate compact query",key="consensus_auto_generate",type="primary")
+    if not concepts:
+        st.warning("Enter at least one concept.")
+        return
+    if regenerate or "consensus_auto_result" not in st.session_state or st.session_state.get("consensus_auto_signature")!=sig:
+        # Aggregate inflection variants before applying the document-frequency cutoff.
+        grouped=[r for r in group_text(rank_terms(papers,"Title + abstract",title_weight,1)) if r["Documents"]>=min_df]
+        # MeSH major-topic weighting is secondary to document frequency.
+        mesh_rows=[dict(r, **{"Auto MeSH score": r["Documents"] + .5*r.get("Major topic",0)}) for r in mesh]
+        mesh_rows.sort(key=lambda r:(-r["Auto MeSH score"],r["Term"]))
+        blocks=[]
+        details=[]
+        used_text=set()
+        used_mesh=set()
+        with st.spinner("Ranking observed vocabulary by concept…"):
+            for concept in concepts:
+                # Avoid placing the same term into multiple AND-connected concepts.
+                pool=[r for r in grouped if r["Term"] not in used_text]
+                mpool=[r for r in mesh_rows if r["Term"] not in used_mesh]
+                ranked=apply_ranking(pool,concept,"Hybrid",.8,"Score","TF-IDF rank") if use_semantic else pool
+                ranked_mesh=apply_ranking(mpool,concept,"Hybrid",.8,"Auto MeSH score","Frequency rank") if use_semantic and mpool and mesh_n else mpool
+                selected=select_terms(pool,concept,int(text_n),ranked=ranked)
+                controlled=select_terms(mpool,concept,int(mesh_n),mesh=True,ranked=ranked_mesh) if mesh_n else []
+                used_text.update(r["Term"] for r in selected)
+                used_mesh.update(r["Term"] for r in controlled)
+                blocks.append(format_block(selected,controlled))
+                for kind,chosen in (("Title/abstract",selected),("MeSH",controlled)):
+                    for r in chosen:
+                        details.append({"Concept":concept,"Type":kind,"Observed term":r["Term"],
+                            "Query term(s)":" OR ".join(r.get("Patterns",[r["Term"]])),
+                            "Observed variants":", ".join(r.get("Variants",[r["Term"]])),
+                            "Documents":r["Documents"],"Semantic similarity":r.get("Semantic similarity",""),
+                            "Consensus ranks":r.get("Consensus ranks","")})
+        st.session_state["consensus_auto_result"]=(blocks,details)
+        st.session_state["consensus_auto_signature"]=sig
+        st.session_state.pop("consensus_auto_editor",None)
+    blocks,details=st.session_state["consensus_auto_result"]
+    if details:
+        with st.expander("Audit: selected terms, original variants and seed-paper ranks",expanded=False):
+            st.dataframe(details,use_container_width=True)
+            download("Export automatic term audit",details,"consensus_auto_audit.csv")
+    query=build_query(blocks)
+    if not query:
+        st.warning("No complete draft: no sufficiently relevant observed terms for "+", ".join(c for c,b in zip(concepts,blocks) if not b)+". Adjust concept labels or minimum document frequency.")
+        return
+    draft=st.text_area("Editable PubMed draft (OR within blocks; AND between blocks)",value=query,key="consensus_auto_editor",height=240)
+    st.download_button("Download compact PubMed query",draft,"consensus_auto_query.txt",key="consensus_auto_download")
+    st.caption("Truncation is limited to observed regular inflections with a sufficiently long shared prefix. MeSH descriptors remain exact and explode by default. Verify recall with known relevant papers and inspect PubMed Search Details.")
