@@ -2,7 +2,7 @@ name: Python checks
 
 on:
   push:
-    branches: [main]
+    branches: [main, secrets-auto-harvesting]
   pull_request:
 
 jobs:
