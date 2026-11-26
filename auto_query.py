@@ -5,7 +5,7 @@ import re
 from collections import defaultdict
 from simplemma import lemmatize
 
-GENERIC = set("study studies research result results analysis data method methods participant participants effect effects association associations relationship relationships significant group groups sample samples model models level levels factor factors variable variables population populations outcome outcomes findings evidence humans human male female adult adults article articles review reviews".split())
+GENERIC = set("study studies research result results analysis data method methods participant participants effect effects association associations relationship relationships significant group groups sample samples model models level levels factor factors variable variables population populations outcome outcomes findings evidence article articles review reviews".split())
 CHECKTAGS = {"humans", "animals", "male", "female", "adult", "middle aged", "aged", "aged, 80 and over", "young adult", "adolescent", "child", "child, preschool", "infant", "pregnancy"}
 STOP = GENERIC | set("a an the in of on for from to with and or by among between how what does do is are can which whether".split())
 
@@ -24,7 +24,7 @@ def content_words(term):
 def suggest_concepts(question):
     """Heuristic question decomposition; never silently impose PICO constraints."""
     q = question.strip().rstrip("?.")
-    q = re.sub(r"^(?:what (?:is|are) (?:the )?|how (?:do|does|can) |is there (?:an? )?)", "", q, flags=re.I)
+    q = re.sub(r"^(?:what (?:is|are) (?:the )?|how (?:do|does|can) |does |do |is there (?:an? )?)", "", q, flags=re.I)
     q = re.sub(r"^(?:association|relationship|link|correlation) between\s+|^(?:effect|effects|impact|influence) of\s+", "", q, flags=re.I)
     # Relation markers and explicit population qualifiers, not arbitrary OR lists.
     parts = re.split(r"\s+(?:associated with|related to|affect(?:s)?|influence(?:s)?|predict(?:s)?|impact(?:s)?|on|among|versus|vs\.?)\s+", q, flags=re.I)
@@ -97,7 +97,7 @@ def select_terms(rows, concept, n, mesh=False, ranked=None):
         if not overlap and not semantic:
             continue
         # Avoid generic partial phrases from unrelated concepts.
-        if overlap and len(content_words(term))==1 and len(anchor)>1 and not semantic:
+        if overlap and len(content_words(term))==1 and len(anchor)>1 and not semantic and not mesh:
             continue
         eligible.append(row)
     # Prefer full topic phrases when they score similarly; do not keep redundant
