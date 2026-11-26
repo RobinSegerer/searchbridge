@@ -3,7 +3,7 @@ name: Python syntax check
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, secrets-auto-harvesting]
 
 jobs:
   compile:
