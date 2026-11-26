@@ -1,10 +1,10 @@
 # SearchBridge — server secrets & automatic term harvesting
 
-This is the **secrets-auto-harvesting** branch. The original main branch remains unchanged. The existing translation, proximity, term harvesting, retrieval, deduplication and local semantic ranking tools remain available. The Review Pipeline in this branch offers **manual screening only**, with no OpenAI calls or API-key fields. The older documentation below describes the main branch; its OpenAI screening and credential-entry instructions do not apply here.
+This is the server-secrets and automatic term harvesting edition. The existing translation, proximity, term harvesting, retrieval, deduplication and local semantic ranking tools remain available. The Review Pipeline in this branch offers **manual screening only**, with no OpenAI calls or API-key fields. The older documentation below describes the previous edition; its OpenAI screening and credential-entry instructions do not apply here.
 
-## Deploy a separate private Streamlit app
+## Configure your private Streamlit app
 
-Select repository `RobinSegerer/searchbridge`, branch `secrets-auto-harvesting`, entry point `app.py` in Streamlit Community Cloud. Set the application to private / restrict access to approved users. A public app would let visitors consume the configured account's API quotas; never use this branch publicly with paid or licensed keys without appropriate access and usage controls.
+Select repository `RobinSegerer/searchbridge`, branch `main`, entry point `app.py` in Streamlit Community Cloud. Set the application to private / restrict access to approved users. A public app would let visitors consume the configured account's API quotas; never use this branch publicly with paid or licensed keys without appropriate access and usage controls.
 
 Add these top-level settings in the app's **Settings → Secrets** (only configure the services you actually use):
 
