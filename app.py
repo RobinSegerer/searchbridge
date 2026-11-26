@@ -11,6 +11,7 @@ import zipfile
 from datetime import datetime, timezone
 
 import streamlit as st
+from server_secrets import secret, status, redact
 import requests
 from urllib.parse import urlencode
 
@@ -68,7 +69,7 @@ with hero_col:
     st.markdown(
         '<div class="hero"><h1>SearchBridge</h1>'
         '<p>A toolkit for systematic searching and evidence synthesis</p>'
-        '<p>Search translation · Semantic reranking · Optional LLM screening · Human review</p></div>',
+        '<p>Search translation · Semantic reranking · Human review</p></div>',
         unsafe_allow_html=True,
     )
 SAMPLE = """(
@@ -228,13 +229,9 @@ with translate_tab:
                         "Verify PubMed syntax and hit count with NCBI ESearch",
                         expanded=bool(item.get("requires_post"))
                     ):
-                        ncbikey = st.text_input(
-                            "NCBI API key (optional)", type="password",
-                            key="translated_pubmed_api_key",
-                        )
-                        ncbi_email = st.text_input(
-                            "NCBI email (optional)", key="translated_pubmed_email",
-                        )
+                        ncbikey = secret("NCBI_API_KEY")
+                        st.caption(status("NCBI_API_KEY"))
+                        ncbi_email = secret("NCBI_EMAIL")
                         if st.button(
                             "Validate PubMed query (ESearch POST)",
                             key="validate_translated_pubmed"
@@ -395,9 +392,8 @@ with translate_tab:
                     )
                     if item.get("url"):
                         with st.expander("Semantic Scholar API key and live validation"):
-                            s2_key = st.text_input(
-                                "Semantic Scholar API key (optional)",
-                                type="password", key="s2_search_key")
+                            s2_key = secret("SEMANTIC_SCHOLAR_API_KEY")
+                            st.caption(status("SEMANTIC_SCHOLAR_API_KEY"))
                             if st.button("Validate bulk search query live",
                                          key="test_s2_search"):
                                 try:
@@ -428,13 +424,13 @@ with translate_tab:
                                             "HTTP 429 – S2 rate limit. "
                                             "The syntax could not be validated "
                                             "live; retry with "
-                                            "your own API key."
+                                            "a configured server secret."
                                         )
                                     else:
                                         st.error(
                                             f"Semantic Scholar reports HTTP "
                                             f"{response.status_code}: "
-                                            f"{response.text[:500]}"
+                                            f"{redact(response.text[:500])}"
                                         )
                                 except (requests.RequestException, ValueError) as exc:
                                     st.error(f"S2 live test failed: {exc}")
@@ -600,9 +596,10 @@ with pubmed_tab:
         with x:
             max_records = st.number_input("Maximum candidate records", min_value=1,
                                           max_value=10000, value=1000, step=100)
-            email = st.text_input("NCBI email (recommended)")
+            email = secret("NCBI_EMAIL")
         with y:
-            key = st.text_input("NCBI API key (optional)", type="password")
+            key = secret("NCBI_API_KEY")
+            st.caption(status("NCBI_API_KEY"))
             st.caption("API rate limits apply. Credentials are not written to disk.")
         submitted = st.form_submit_button("Retrieve PubMed records", type="primary")
     try:
@@ -719,9 +716,7 @@ with help_tab:
       Exact DOI, PMID and non-conflicting normalized title+year duplicates
       are merged; fuzzy matches are reported only for manual review.
     - Lexical TF-IDF ranks all deduplicated records without excluding any.
-      OpenAI Responses API screening is optional, user-key-funded and opt-in:
-      suggestions are structured Include/Exclude/Manual Review with evidence
-      and uncertainty; only human decisions count as final.
+      Manual screening uses titles and full abstracts; no LLM screening is performed.
       The full run exports RIS, CSV, JSON audits, deduplication logs,
       source counts, AI suggestions and human decisions.
     - The PubMed translator converts Ovid MeSH with exp to [mh] and
@@ -774,10 +769,9 @@ with help_tab:
       identical implementation.
     ### Deploy
     From [Streamlit Community Cloud](https://share.streamlit.io/), choose this
-    GitHub repository, main branch and app.py. No paid API key is required.
+    GitHub repository, secrets-auto-harvesting branch and app.py. Configure server secrets and use a private app.
     Uploaded RIS files are processed in the hosted Streamlit environment.
     The optional Review Pipeline uses external APIs. PubMed is free subject
     to NCBI rate limits; OpenAlex has budget and paging rules (API key is
-    recommended); Scopus requires subscription/permissions. OpenAI screening
-    requires an API key, express consent and expert verification.
+    recommended); Scopus requires subscription/permissions. All API keys are read from Streamlit secrets.
     """)
