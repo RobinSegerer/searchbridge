@@ -134,7 +134,7 @@ def render() -> None:
                     f"{retrieved.candidate_count:,} hits downloaded."
                 )
             except (PubMedError, ValueError) as exc:
-                st.error(f"PubMed retrieval failed: {exc}")
+                st.error(f"PubMed retrieval failed: {redact(exc)}")
             finally:
                 bar.empty()
 
