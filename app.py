@@ -770,7 +770,7 @@ with help_tab:
       identical implementation.
     ### Deploy
     From [Streamlit Community Cloud](https://share.streamlit.io/), choose this
-    GitHub repository, secrets-auto-harvesting branch and app.py. Configure server secrets and use a private app.
+    GitHub repository, main branch and app.py. Configure server secrets and use a private app.
     Uploaded RIS files are processed in the hosted Streamlit environment.
     The optional Review Pipeline uses external APIs. PubMed is free subject
     to NCBI rate limits; OpenAlex has budget and paging rules (API key is
